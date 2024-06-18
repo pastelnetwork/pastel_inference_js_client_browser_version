@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test</title>
+    <script type="text/javascript" src="libpastel_wasm.js"></script>
+    <style>
+        .waiting {
+            cursor: wait;
+        }
+    </style>
+    <script>
+        let pastelInstance;
+        let indNewAddresses = 0;
+        let indNewPastelID = 0;
+
+        function setCursorToWait() {
+            document.body.classList.add('waiting');
+        }
+
+        function setCursorToDefault() {
+            document.body.classList.remove('waiting');
+        }
+
+        Module.onRuntimeInitialized = function() {
+            pastelInstance = new Module.Pastel();
+            console.log(pastelInstance);
+
+            document.getElementById("makeNewWallet").addEventListener("click", function() {
+                setCursorToWait();
+                let password = prompt("Please enter password", "");
+                if (!password) {
+                    alert("Password is required!");
+                    setCursorToDefault();
+                    return;
+                }
+                let filename = prompt("Please enter the file name", "wallet.dat");
+                if (!filename) {
+                    alert("File name is required!");
+                    setCursorToDefault();
+                    return;
+                }
+                let mnemonic = pastelInstance.CreateNewWallet(password);
+                document.getElementById("mnemonic").innerText = mnemonic;
+                setCursorToDefault();
+            });
+
+            document.getElementById('exportWalletButton').addEventListener('click', () => {
+                setCursorToWait();
+                let filename = prompt("Please enter the file name", "wallet.dat");
+                if (!filename) {
+                    alert("File name is required!");
+                    setCursorToDefault();
+                    return;
+                }
+                let content = pastelInstance.ExportWallet();
+                let blob = new Blob([content], {type: "text/plain;charset=utf-8"});
+                let url = window.URL.createObjectURL(blob);
+                let fileLink = document.createElement('a');
+
+                fileLink.href = url;
+                fileLink.download = filename;
+                fileLink.click(); // start download
+                setCursorToDefault();
+            });
+
+            document.getElementById('importWalletButton').addEventListener('click', () => {
+                setCursorToWait();
+                let fileSelector = document.createElement('input');
+                fileSelector.setAttribute('type', 'file');
+                fileSelector.click();
+
+                fileSelector.onchange = (e) => {
+                    let file = e.target.files[0];
+                    let reader = new FileReader();
+
+                    reader.onload = () => {
+                        let content = reader.result; // encode the content to base64
+                        let password = window.prompt("Please enter your password");
+                        if (password) {
+                            pastelInstance.ImportWallet(content, password);
+                        } else {
+                            alert("Password is required!");
+                        }
+                        setCursorToDefault();
+                    };
+                    reader.readAsText(file,'UTF-8');
+                };
+            });
+
+            function getMode() {
+                let selectedMode = document.getElementById("networkMode").value;
+                console.log(selectedMode);
+                console.log(Module.NetworkMode);
+                let mode = Module.NetworkMode[selectedMode];
+                console.log(mode);
+                return mode;
+            }
+
+            document.getElementById("getAddress").addEventListener("click", function() {
+                setCursorToWait();
+                let mode = getMode();
+                let address = pastelInstance.MakeNewAddress(mode);
+                let addressElement = document.createElement("div");
+                addressElement.innerText = `Address ${indNewAddresses}: ${address}`;
+                document.getElementById("addressList").appendChild(addressElement);
+
+                // Update select options
+                let selectElement = document.getElementById("addressIndexList");
+                let optionElement = document.createElement("option");
+                optionElement.text = indNewAddresses;
+                optionElement.value = indNewAddresses;
+                selectElement.appendChild(optionElement);
+
+                indNewAddresses++;
+                setCursorToDefault();
+            });
+
+            document.getElementById("getAddressWInd").addEventListener("click", function() {
+                setCursorToWait();
+                let mode = getMode();
+                let index = parseInt(document.getElementById("addressIndexList").value);
+                try {
+                    let address = pastelInstance.GetAddress(index, mode);
+                    let addressElement = document.createElement("div");
+                    addressElement.innerText = `Address ${index}: ${address}`;
+                    document.getElementById("addressListWInd").appendChild(addressElement);
+                } catch (e) {
+                    alert(`No more addresses - ${index}`);
+                }
+                setCursorToDefault();
+            });
+
+            document.getElementById("getPastelID").addEventListener("click", function() {
+                setCursorToWait();
+                let paslteID = pastelInstance.MakeNewPastelID();
+                let paslteIDElement = document.createElement("div");
+                paslteIDElement.innerText = `Address ${indNewPastelID}: ${paslteID}`;
+                document.getElementById("pastelidList").appendChild(paslteIDElement);
+
+                // Update select options
+                let selectElement = document.getElementById("pastelIDIndexList");
+                let optionElement = document.createElement("option");
+                optionElement.text = indNewPastelID;
+                optionElement.value = indNewPastelID;
+                selectElement.appendChild(optionElement);
+
+                indNewPastelID++;
+                setCursorToDefault();
+            });
+
+            document.getElementById("getPastelIDWInd").addEventListener("click", function() {
+                setCursorToWait();
+                let index = parseInt(document.getElementById("pastelIDIndexList").value);
+                let selectedType = document.getElementById("pastelIDType").value;
+                try {
+                    console.log(index, selectedType)
+                    console.log(Module.PastelIDType);
+                    let type = Module.PastelIDType[selectedType];
+
+                    let pastelID = pastelInstance.GetPastelIDByIndex(index, type);
+                    let pastelIDElement = document.createElement("div");
+                    pastelIDElement.innerText = `PastelID ${index}: ${pastelID}`;
+                    document.getElementById("pastelIDListWInd").appendChild(pastelIDElement);
+                } catch (e) {
+                    alert(`No more pastelIDs - ${index}`);
+                }
+                setCursorToDefault();
+            });
+        };
+    </script>
+</head>
+<body>
+<button id="makeNewWallet">Make New Wallet</button>
+<button id="exportWalletButton">Export Wallet</button>
+<button id="importWalletButton">Import Wallet</button>
+<div id="mnemonic"></div>
+<hr/>
+<select id="networkMode">
+    <option value="Mainnet">Mainnet</option>
+    <option value="Testnet">Testnet</option>
+    <option value="Devnet">Devnet</option>
+</select>
+<br/>
+<br/>
+<button id="getAddress">Make New Address</button>
+<div id="addressList"></div>
+<br/>
+<select id="addressIndexList"></select>
+<button id="getAddressWInd">Get Existing Address by index</button>
+<div id="addressListWInd"></div><br/>
+<hr/>
+<hr/>
+<button id="getPastelID">Make New PastelID</button>
+<div id="pastelidList"></div>
+<br/>
+<select id="pastelIDIndexList"></select>
+<select id="pastelIDType">
+    <option value="PastelID">PastelID</option>
+    <option value="LegRoast">LegRoast</option>
+</select>
+<button id="getPastelIDWInd">Get Existing PastelID by index</button>
+<div id="pastelIDListWInd"></div><br/>
+<hr/>
+<hr/>
+</body>
+</html>

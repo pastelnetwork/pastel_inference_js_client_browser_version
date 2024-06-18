@@ -1,0 +1,591 @@
+const express = require("express");
+const multer = require("multer");
+const bodyParser = require("body-parser");
+const WebSocket = require("ws");
+const os = require("os");
+const path = require("path");
+const fs = require("fs");
+const {
+  getCurrentPastelIdAndPassphrase,
+  setPastelIdAndPassphrase,
+} = require("./storage");
+const { PastelInferenceClient } = require("./pastel_inference_client");
+
+const {
+  checkForNewIncomingMessages,
+  sendMessageAndCheckForNewIncomingMessages,
+  handleCreditPackTicketEndToEnd,
+  getCreditPackTicketInfoEndToEnd,
+  getMyValidCreditPackTicketsEndToEnd,
+  handleInferenceRequestEndToEnd,
+  estimateCreditPackCostEndToEnd,
+} = require("./end_to_end_functions");
+const {
+  getLocalRPCSettings,
+  getNetworkInfo,
+  initializeRPCConnection,
+  createAndFundNewPSLCreditTrackingAddress,
+  checkSupernodeList,
+  registerPastelID,
+  listPastelIDTickets,
+  findPastelIDTicket,
+  getPastelTicket,
+  listContractTickets,
+  findContractTicket,
+  getContractTicket,
+  importPrivKey,
+  importWallet,
+  listAddressAmounts,
+  getBalance,
+  getWalletInfo,
+  getNewAddress,
+  checkForRegisteredPastelID,
+  createAndRegisterNewPastelID,
+  stopPastelDaemon,
+  startPastelDaemon,
+  getMyPslAddressWithLargestBalance
+} = require("./rpc_functions");
+const { logger, logEmitter, logBuffer, safeStringify } = require("./logger");
+const {
+  prettyJSON,
+  getClosestSupernodeToPastelIDURL,
+  getNClosestSupernodesToPastelIDURLs,
+} = require("./utility_functions");
+
+let MY_LOCAL_PASTELID = "";
+let MY_PASTELID_PASSPHRASE = "";
+
+const app = express();
+app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
+app.use(bodyParser.json({ limit: "50mb" }));
+const upload = multer({ dest: "uploads/" });
+
+const port = process.env.CLIENT_PORT || 3100;
+const webSocketPort = process.env.CLIENT_WEBSOCKET_PORT || 3101;
+
+const wss = new WebSocket.Server({ port: webSocketPort }, () => {
+  console.log(`WebSocket server started on port ${webSocketPort}`);
+});
+
+function getServerIpAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return "localhost";
+}
+
+app.get("/ws-url", (req, res) => {
+  const ipAddress = getServerIpAddress();
+  const wsUrl = `ws://${ipAddress}:${webSocketPort}`;
+  res.json({ wsUrl });
+});
+
+wss.on("connection", (ws) => {
+  logger.info(`Client connected: ${ws}`);
+
+  logBuffer.forEach((logEntry) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(logEntry);
+    }
+  });
+
+  const logListener = (logEntry) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(logEntry);
+    }
+  };
+  logEmitter.on("newLog", logListener);
+
+  ws.on("message", (message) => {
+    logger.info(`Received message from client: ${message}`);
+  });
+
+  ws.on("close", (code, reason) => {
+    logger.info(`Client disconnected; code: ${code}, reason: ${reason}`);
+    logEmitter.removeListener("newLog", logListener);
+  });
+
+  ws.on("error", (error) => {
+    logger.error(`WebSocket error: ${error.message}`);
+    logEmitter.removeListener("newLog", logListener);
+  });
+});
+
+let rpcport;
+let network;
+
+(async () => {
+  try {
+    await initializeRPCConnection();
+    const rpcSettings = await getLocalRPCSettings();
+    rpcport = rpcSettings.rpcport;
+    network = getNetworkInfo(rpcport).network;
+
+    const pastelData = await getCurrentPastelIdAndPassphrase();
+    MY_LOCAL_PASTELID = pastelData.pastelID;
+    MY_PASTELID_PASSPHRASE = pastelData.passphrase;
+
+    const { validMasternodeListFullDF } = await checkSupernodeList();
+    if (!validMasternodeListFullDF) {
+      throw new Error(
+        "The Pastel Daemon is not fully synced, and thus the Supernode information commands are not returning complete information. Finish fully syncing and try again."
+      );
+    }
+
+    let supernodeURL;
+    if (MY_LOCAL_PASTELID !== "") {
+      const result = await getClosestSupernodeToPastelIDURL(
+        MY_LOCAL_PASTELID,
+        validMasternodeListFullDF
+      );
+      if (result) {
+        supernodeURL = result.url;
+      }
+    }
+
+    async function configureRPCAndSetBurnAddress() {
+      try {
+        let burnAddress;
+        if (rpcport === "9932") {
+          burnAddress = "PtpasteLBurnAddressXXXXXXXXXXbJ5ndd";
+        } else if (rpcport === "19932") {
+          burnAddress = "tPpasteLBurnAddressXXXXXXXXXXX3wy7u";
+        } else if (rpcport === "29932") {
+          burnAddress = "44oUgmZSL997veFEQDq569wv5tsT6KXf9QY7";
+        } else {
+          throw new Error(`Unsupported RPC port: ${rpcport}`);
+        }
+        return burnAddress;
+      } catch (error) {
+        console.error("Failed to configure RPC or set burn address:", error);
+        throw error;
+      }
+    }
+
+    app.get("/", (req, res) => {
+      res.sendFile(path.join(__dirname, "index.html"));
+    });
+
+    app.get("/favicon.ico", (req, res) => {
+      res.sendFile(path.join(__dirname, "favicon.ico"));
+    });
+
+    app.get("/get-network-info", async (req, res) => {
+      try {
+        res.json({ network });
+      } catch (error) {
+        console.error("Error getting network info:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to get network info" });
+      }
+    });
+
+    app.get("/get-best-supernode-url", async (req, res) => {
+      try {
+        const userPastelID = req.query.userPastelID;
+        const supernodeListDF = await checkSupernodeList();
+        const { url: supernodeURL } = await getClosestSupernodeToPastelIDURL(
+          userPastelID,
+          supernodeListDF.validMasternodeListFullDF
+        );
+        if (!supernodeURL) {
+          throw new Error("No valid supernode URL found.");
+        }
+        res.json({ success: true, supernodeURL });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-inference-model-menu", async (req, res) => {
+      try {
+        if (!MY_LOCAL_PASTELID || !MY_PASTELID_PASSPHRASE) {
+          return res
+            .status(400)
+            .json({
+              success: false,
+              message: "Pastel ID and passphrase not set.",
+            });
+        }
+        const pastelInferenceClient = new PastelInferenceClient(
+          MY_LOCAL_PASTELID,
+          MY_PASTELID_PASSPHRASE
+        );
+        const modelMenu = await pastelInferenceClient.getModelMenu(
+          supernodeURL
+        );
+        res.json({ success: true, modelMenu });
+      } catch (error) {
+        logger.error(`Error in getInferenceModelMenu: ${safeStringify(error)}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/estimate-credit-pack-cost", async (req, res) => {
+      const { desiredNumberOfCredits, creditPriceCushionPercentage } = req.body;
+      try {
+        const result = await estimateCreditPackCostEndToEnd(
+          desiredNumberOfCredits,
+          creditPriceCushionPercentage
+        );
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/send-message", async (req, res) => {
+      const { toPastelID, messageBody } = req.body;
+      try {
+        const messageDict = await sendMessageAndCheckForNewIncomingMessages(
+          toPastelID,
+          messageBody
+        );
+        res.json({ success: true, messageDict });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-received-messages", async (req, res) => {
+      try {
+        const messageDict = await checkForNewIncomingMessages();
+        res.json({ success: true, messageDict });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/create-credit-pack-ticket", async (req, res) => {
+      const burnAddress = await configureRPCAndSetBurnAddress();
+      const {
+        numCredits,
+        creditUsageTrackingPSLAddress,
+        maxTotalPrice,
+        maxPerCreditPrice,
+      } = req.body;
+      try {
+        const result = await handleCreditPackTicketEndToEnd(
+          numCredits,
+          creditUsageTrackingPSLAddress,
+          burnAddress,
+          maxTotalPrice,
+          maxPerCreditPrice
+        );
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/credit-pack-info/:txid", async (req, res) => {
+      const { txid } = req.params;
+      try {
+        const result = await getCreditPackTicketInfoEndToEnd(txid);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-my-valid-credit-packs", async (req, res) => {
+      try {
+        const result = await getMyValidCreditPackTicketsEndToEnd();
+        res.json({ success: true, result: result || [] });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-my-psl-address-with-largest-balance", async (req, res) => {
+      try {
+        const result = await getMyPslAddressWithLargestBalance();
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/create-inference-request", async (req, res) => {
+      const {
+        model_inference_type_string: modelInferenceTypeString,
+        model_parameters_json_b64,
+        model_input_data_json_b64,
+        selectedCreditPackTicketId: creditPackTicketPastelTxid,
+        maxCost: maximumInferenceCostInCredits,
+        model_canonical_name: requestedModelCanonicalString,
+      } = req.body;
+      try {
+        const burnAddress = await configureRPCAndSetBurnAddress();
+        const modelParameters = JSON.parse(
+          Buffer.from(model_parameters_json_b64, "base64").toString()
+        );
+        const modelInputData = JSON.parse(
+          Buffer.from(model_input_data_json_b64, "base64").toString()
+        );
+        console.log(`Model Inference Type: ${modelInferenceTypeString}`);
+        const result = await handleInferenceRequestEndToEnd(
+          creditPackTicketPastelTxid,
+          modelInputData,
+          requestedModelCanonicalString,
+          modelInferenceTypeString,
+          modelParameters,
+          maximumInferenceCostInCredits,
+          burnAddress
+        );
+        res.json({ success: true, result });
+      } catch (error) {
+        console.error("Error in create-inference-request:", error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/check-supernode-list", async (req, res) => {
+      try {
+        const { validMasternodeListFullDF } = await checkSupernodeList();
+        res.json({ success: true, result: { validMasternodeListFullDF } });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/register-pastel-id", async (req, res) => {
+      const { pastelid, passphrase, address } = req.body;
+      try {
+        const result = await registerPastelID(pastelid, passphrase, address);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/list-pastel-id-tickets", async (req, res) => {
+      const { filter, minheight } = req.query;
+      try {
+        const result = await listPastelIDTickets(filter, minheight);
+        console.log("Pastel ID Tickets:", result);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/find-pastel-id-ticket/:key", async (req, res) => {
+      const { key } = req.params;
+      try {
+        const result = await findPastelIDTicket(key);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-pastel-ticket/:txid", async (req, res) => {
+      const { txid } = req.params;
+      const { decodeProperties } = req.query;
+      try {
+        const result = await getPastelTicket(txid, decodeProperties);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/list-contract-tickets", async (req, res) => {
+      const { ticketTypeIdentifier, startingBlockHeight } = req.query;
+      try {
+        const result = await listContractTickets(
+          ticketTypeIdentifier,
+          startingBlockHeight
+        );
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/find-contract-ticket/:key", async (req, res) => {
+      const { key } = req.params;
+      try {
+        const result = await findContractTicket(key);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-contract-ticket/:txid", async (req, res) => {
+      const { txid } = req.params;
+      const { decodeProperties } = req.query;
+      try {
+        const result = await getContractTicket(txid, decodeProperties);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/import-priv-key", async (req, res) => {
+      const { zcashPrivKey, label, rescan } = req.body;
+      try {
+        const result = await importPrivKey(zcashPrivKey, label, rescan);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/import-wallet", async (req, res) => {
+      const { filename } = req.body;
+      try {
+        const result = await importWallet(filename);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/list-address-amounts", async (req, res) => {
+      const { includeEmpty, isMineFilter } = req.query;
+      try {
+        const result = await listAddressAmounts(includeEmpty, isMineFilter);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-balance", async (req, res) => {
+      const { account, minConf, includeWatchOnly } = req.query;
+      try {
+        const result = await getBalance(account, minConf, includeWatchOnly);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/get-wallet-info", async (req, res) => {
+      try {
+        const result = await getWalletInfo();
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/create-and-fund-new-address", async (req, res) => {
+      try {
+        const { amount } = req.body;
+        const result = await createAndFundNewPSLCreditTrackingAddress(amount);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post("/check-for-pastel-id", async (req, res) => {
+      const { autoRegister } = req.body;
+      try {
+        const result = await checkForRegisteredPastelID(autoRegister);
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post(
+      "/import-pastel-id",
+      upload.single("pastelIDFile"),
+      async (req, res) => {
+        try {
+          const destFolder = getNetworkSpecificDestFolder(network);
+          fs.mkdirSync(destFolder, { recursive: true });
+          const sourceFilePath = req.file.path;
+          const destFilePath = path.join(destFolder, req.file.originalname);
+          fs.renameSync(sourceFilePath, destFilePath);
+
+          await stopPastelDaemon();
+          await startPastelDaemon();
+
+          res.json({
+            success: true,
+            message: "PastelID imported successfully!",
+          });
+        } catch (error) {
+          console.error("Error importing PastelID:", error);
+          res
+            .status(500)
+            .json({ success: false, message: "Failed to import PastelID." });
+        }
+      }
+    );
+
+    app.post("/create-and-register-pastel-id", async (req, res) => {
+      const { passphraseForNewPastelID } = req.body;
+      try {
+        const result = await createAndRegisterNewPastelID(
+          passphraseForNewPastelID
+        );
+        if (result.success) {
+          res.json({
+            success: true,
+            PastelID: result.PastelID,
+            PastelIDRegistrationTXID: result.PastelIDRegistrationTXID,
+          });
+        } else {
+          res.json({ success: false, message: result.message });
+        }
+      } catch (error) {
+        logger.error(
+          `Error in create-and-register-pastel-id: ${safeStringify(error)}`
+        );
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    app.post("/set-pastel-id-passphrase", async (req, res) => {
+      const { pastelID, passphrase } = req.body;
+      try {
+        await setPastelIdAndPassphrase(pastelID, passphrase);
+        MY_LOCAL_PASTELID = pastelID;
+        MY_PASTELID_PASSPHRASE = passphrase;
+        res.json({ success: true });
+        app.emit("pastelIDAndPassphraseSet");
+      } catch (error) {
+        console.error("Error setting PastelID and passphrase:", error);
+        res
+          .status(500)
+          .json({
+            success: false,
+            message: "Failed to set PastelID and passphrase",
+          });
+      }
+    });
+
+    app.listen(port, () => {
+      console.log(`Server running at http://localhost:${port}`);
+    });
+  } catch (error) {
+    console.error("Error initializing server:", error);
+    process.exit(1);
+  }
+})();
+
+function getNetworkSpecificDestFolder(network) {
+  if (network === "mainnet") {
+    return path.join(process.env.HOME, ".pastel/pastelkeys");
+  } else if (network === "testnet") {
+    return path.join(process.env.HOME, ".pastel/testnet/pastelkeys");
+  } else if (network === "devnet") {
+    return path.join(process.env.HOME, ".pastel/devnet/pastelkeys");
+  } else {
+    throw new Error(`Unknown network: ${network}`);
+  }
+}
