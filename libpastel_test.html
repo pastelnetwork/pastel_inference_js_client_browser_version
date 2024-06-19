@@ -36,6 +36,31 @@
         }
       }
 
+      function base58Decode(string) {
+        const alphabet =
+          "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        const base = 58;
+        let decoded = BigInt(0);
+        let multi = BigInt(1);
+
+        for (let i = string.length - 1; i >= 0; i--) {
+          const value = BigInt(alphabet.indexOf(string[i]));
+          if (value === -1n) throw new Error("Invalid Base58 character");
+          decoded += value * multi;
+          multi *= BigInt(base);
+        }
+
+        const buffer = [];
+        while (decoded >= 256) {
+          buffer.push(Number(decoded % 256n));
+          decoded /= 256n;
+        }
+        buffer.push(Number(decoded));
+
+        // Reverse buffer to get the correct byte array
+        return new Uint8Array(buffer.reverse());
+      }
+
       async function importWallet(serializedWallet, unlock = false) {
         return new Promise((resolve, reject) => {
           try {
@@ -49,9 +74,9 @@
               }
             }
             pastelInstance = new Module.Pastel();
-            parseWasmResponse(() =>
-              pastelInstance.ImportWallet(serializedWallet)
-            );
+            // Decode base58
+            const decodedWallet = base58Decode(serializedWallet);
+            parseWasmResponse(() => pastelInstance.ImportWallet(decodedWallet));
             if (unlock) {
               parseWasmResponse(() => pastelInstance.UnlockWallet(password));
             }
@@ -65,7 +90,6 @@
           }
         });
       }
-
       async function LoadWallet() {
         if (walletLoaded) {
           alert("Please logout before opening a new wallet.");
@@ -100,7 +124,8 @@
             reader.onload = () => {
               const arrayBuffer = reader.result;
               const uint8Array = new Uint8Array(arrayBuffer);
-              resolve(uint8Array);
+              const base58String = new TextDecoder().decode(uint8Array); // Assuming wallet data is in Base58 encoded text format
+              resolve(base58String);
             };
             reader.onerror = () => {
               resolve(null);
@@ -344,25 +369,66 @@
             setCursorToDefault();
           });
 
-        // Additional sample forms for other methods
         document
           .getElementById("exportPastelIDKeys")
-          .addEventListener("click", function () {
+          .addEventListener("click", async function () {
             setCursorToWait();
-            let pastelID = prompt("Please enter the PastelID");
-            let type = prompt("Please enter the type (PastelID or LegRoast)");
-            let password = prompt("Please enter the password");
             try {
-              let keys = pastelInstance.ExportPastelIDKeys(
-                pastelID,
-                type,
-                password
-              );
-              document.getElementById("exportedKeys").innerText = keys;
+              let password = prompt("Please enter the password");
+              if (!password) {
+                alert("Password is required!");
+                setCursorToDefault();
+                return;
+              }
+
+              let allPastelIDs = [];
+              let index = 0;
+              let continueFetching = true;
+              while (continueFetching) {
+                try {
+                  const pastelIDObjString = parseWasmResponse(() =>
+                    pastelInstance.GetPastelIDByIndex(index, "PastelID")
+                  );
+                  const pastelIDObj = JSON.parse(pastelIDObjString);
+                  allPastelIDs.push(pastelIDObj.data);
+                  index++;
+                } catch (e) {
+                  continueFetching = false; // No more pastelIDs
+                }
+              }
+
+              let allKeys = [];
+              for (const pastelID of allPastelIDs) {
+                const pastelIDKeys = parseWasmResponse(() =>
+                  pastelInstance.ExportPastelIDKeys(
+                    pastelID,
+                    "PastelID",
+                    password
+                  )
+                );
+                const legRoastKeys = parseWasmResponse(() =>
+                  pastelInstance.ExportPastelIDKeys(
+                    pastelID,
+                    "LegRoast",
+                    password
+                  )
+                );
+                allKeys.push({ pastelID, pastelIDKeys, legRoastKeys });
+              }
+
+              const blob = new Blob([JSON.stringify(allKeys, null, 2)], {
+                type: "application/json",
+              });
+              const url = window.URL.createObjectURL(blob);
+              const fileLink = document.createElement("a");
+              fileLink.href = url;
+              fileLink.download = "pastelIDKeys.json";
+              fileLink.click();
+              setCursorToDefault();
             } catch (e) {
               alert(`Error exporting keys: ${e}`);
+              setCursorToDefault();
             }
-            setCursorToDefault();
           });
 
         document
