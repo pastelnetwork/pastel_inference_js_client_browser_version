@@ -15,7 +15,7 @@
     </style>
     <script>
       let pastelInstance;
-      let walletLoaded = false; // Flag to check if a wallet is loaded
+      let walletLoaded = false;
       let indNewAddresses = 0;
       let indNewPastelID = 0;
 
@@ -57,7 +57,6 @@
         }
         buffer.push(Number(decoded));
 
-        // Reverse buffer to get the correct byte array
         return new Uint8Array(buffer.reverse());
       }
 
@@ -74,13 +73,12 @@
               }
             }
             pastelInstance = new Module.Pastel();
-            // Decode base58
             const decodedWallet = base58Decode(serializedWallet);
             parseWasmResponse(() => pastelInstance.ImportWallet(decodedWallet));
             if (unlock) {
               parseWasmResponse(() => pastelInstance.UnlockWallet(password));
             }
-            walletLoaded = true; // Set the flag to true when a wallet is loaded
+            walletLoaded = true;
             resolve();
           } catch (error) {
             alert("Invalid wallet file! - " + error);
@@ -90,6 +88,7 @@
           }
         });
       }
+
       async function LoadWallet() {
         if (walletLoaded) {
           alert("Please logout before opening a new wallet.");
@@ -124,13 +123,13 @@
             reader.onload = () => {
               const arrayBuffer = reader.result;
               const uint8Array = new Uint8Array(arrayBuffer);
-              const base58String = new TextDecoder().decode(uint8Array); // Assuming wallet data is in Base58 encoded text format
+              const base58String = new TextDecoder().decode(uint8Array);
               resolve(base58String);
             };
             reader.onerror = () => {
               resolve(null);
             };
-            reader.readAsArrayBuffer(file); // Read as ArrayBuffer to handle binary data
+            reader.readAsArrayBuffer(file);
           };
         });
       }
@@ -138,28 +137,29 @@
       async function updatePastelIDSelect() {
         const pastelIDIndexLists =
           document.querySelectorAll("#pastelIDIndexList");
-        pastelIDIndexLists.forEach((selectElement) => {
-          selectElement.innerHTML = ""; // Clear existing options
 
-          let index = 0;
-          let continueFetching = true;
-          while (continueFetching) {
-            try {
-              const pastelIDObjString = parseWasmResponse(() =>
-                pastelInstance.GetPastelIDByIndex(index, "PastelID")
-              );
-              const pastelIDObj = JSON.parse(pastelIDObjString);
-              const pastelID = pastelIDObj.data;
+        try {
+          // Get the total count of PastelIDs
+          const response = JSON.parse(
+            parseWasmResponse(() => pastelInstance.GetPastelIDs())
+          );
+          const pastelIDs = response.data; // Extract the data array
+          const pastelIDCount = pastelIDs.length;
+
+          pastelIDIndexLists.forEach((selectElement) => {
+            selectElement.innerHTML = ""; // Clear existing options
+
+            for (let index = 0; index < pastelIDCount; index++) {
+              const pastelID = pastelIDs[index];
               let optionElement = document.createElement("option");
               optionElement.text = pastelID;
               optionElement.value = pastelID;
               selectElement.appendChild(optionElement);
-              index++;
-            } catch (e) {
-              continueFetching = false; // No more pastelIDs
             }
-          }
-        });
+          });
+        } catch (e) {
+          console.log("Error fetching PastelIDs: ", e);
+        }
       }
 
       Module.onRuntimeInitialized = function () {
@@ -184,7 +184,7 @@
             }
             let mnemonic = pastelInstance.CreateNewWallet(password);
             document.getElementById("mnemonic").innerText = mnemonic;
-            walletLoaded = true; // Set the flag to true when a new wallet is created
+            walletLoaded = true;
             setCursorToDefault();
           });
 
@@ -207,7 +207,7 @@
 
             fileLink.href = url;
             fileLink.download = filename;
-            fileLink.click(); // start download
+            fileLink.click();
             setCursorToDefault();
           });
 
@@ -236,7 +236,6 @@
             addressElement.innerText = `Address ${indNewAddresses}: ${address}`;
             document.getElementById("addressList").appendChild(addressElement);
 
-            // Update select options
             let selectElement = document.getElementById("addressIndexList");
             let optionElement = document.createElement("option");
             optionElement.text = indNewAddresses;
@@ -286,10 +285,10 @@
 
               let pastelIDindexElement =
                 document.getElementById("pastelIDIndex");
-              // Set value of index to the index
               pastelIDindexElement.value = indNewPastelID;
               indNewPastelID++;
 
+              // Update PastelID select options
               await updatePastelIDSelect();
             } catch (e) {
               alert(`Error creating new PastelID: ${e}`);
@@ -393,7 +392,7 @@
                   allPastelIDs.push(pastelIDObj.data);
                   index++;
                 } catch (e) {
-                  continueFetching = false; // No more pastelIDs
+                  continueFetching = false;
                 }
               }
 
