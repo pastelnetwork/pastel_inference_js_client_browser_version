@@ -1,207 +1,567 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
+  <head>
+    <meta charset="UTF-8" />
     <title>Test</title>
     <script type="text/javascript" src="libpastel_wasm.js"></script>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css"
+      rel="stylesheet"
+    />
     <style>
-        .waiting {
-            cursor: wait;
-        }
+      .waiting {
+        cursor: wait;
+      }
     </style>
     <script>
-        let pastelInstance;
-        let indNewAddresses = 0;
-        let indNewPastelID = 0;
+      let pastelInstance;
+      let walletLoaded = false; // Flag to check if a wallet is loaded
+      let indNewAddresses = 0;
+      let indNewPastelID = 0;
 
-        function setCursorToWait() {
-            document.body.classList.add('waiting');
+      function setCursorToWait() {
+        document.body.classList.add("waiting");
+      }
+
+      function setCursorToDefault() {
+        document.body.classList.remove("waiting");
+      }
+
+      function parseWasmResponse(responseFn) {
+        try {
+          return responseFn();
+        } catch (error) {
+          console.error("WASM Error:", error);
+          throw error;
         }
+      }
 
-        function setCursorToDefault() {
-            document.body.classList.remove('waiting');
-        }
-
-        Module.onRuntimeInitialized = function() {
-            pastelInstance = new Module.Pastel();
-            console.log(pastelInstance);
-
-            document.getElementById("makeNewWallet").addEventListener("click", function() {
-                setCursorToWait();
-                let password = prompt("Please enter password", "");
-                if (!password) {
-                    alert("Password is required!");
-                    setCursorToDefault();
-                    return;
-                }
-                let filename = prompt("Please enter the file name", "wallet.dat");
-                if (!filename) {
-                    alert("File name is required!");
-                    setCursorToDefault();
-                    return;
-                }
-                let mnemonic = pastelInstance.CreateNewWallet(password);
-                document.getElementById("mnemonic").innerText = mnemonic;
-                setCursorToDefault();
-            });
-
-            document.getElementById('exportWalletButton').addEventListener('click', () => {
-                setCursorToWait();
-                let filename = prompt("Please enter the file name", "wallet.dat");
-                if (!filename) {
-                    alert("File name is required!");
-                    setCursorToDefault();
-                    return;
-                }
-                let content = pastelInstance.ExportWallet();
-                let blob = new Blob([content], {type: "text/plain;charset=utf-8"});
-                let url = window.URL.createObjectURL(blob);
-                let fileLink = document.createElement('a');
-
-                fileLink.href = url;
-                fileLink.download = filename;
-                fileLink.click(); // start download
-                setCursorToDefault();
-            });
-
-            document.getElementById('importWalletButton').addEventListener('click', () => {
-                setCursorToWait();
-                let fileSelector = document.createElement('input');
-                fileSelector.setAttribute('type', 'file');
-                fileSelector.click();
-
-                fileSelector.onchange = (e) => {
-                    let file = e.target.files[0];
-                    let reader = new FileReader();
-
-                    reader.onload = () => {
-                        let content = reader.result; // encode the content to base64
-                        let password = window.prompt("Please enter your password");
-                        if (password) {
-                            pastelInstance.ImportWallet(content, password);
-                        } else {
-                            alert("Password is required!");
-                        }
-                        setCursorToDefault();
-                    };
-                    reader.readAsText(file,'UTF-8');
-                };
-            });
-
-            function getMode() {
-                let selectedMode = document.getElementById("networkMode").value;
-                console.log(selectedMode);
-                console.log(Module.NetworkMode);
-                let mode = Module.NetworkMode[selectedMode];
-                console.log(mode);
-                return mode;
+      async function importWallet(serializedWallet, unlock = false) {
+        return new Promise((resolve, reject) => {
+          try {
+            let password = "";
+            if (unlock) {
+              password = window.prompt("Please enter your password");
+              if (password === null) {
+                alert("Password is required!");
+                reject(new Error("Password is required"));
+                return;
+              }
             }
+            pastelInstance = new Module.Pastel();
+            parseWasmResponse(() =>
+              pastelInstance.ImportWallet(serializedWallet)
+            );
+            if (unlock) {
+              parseWasmResponse(() => pastelInstance.UnlockWallet(password));
+            }
+            walletLoaded = true; // Set the flag to true when a wallet is loaded
+            resolve();
+          } catch (error) {
+            alert("Invalid wallet file! - " + error);
+            pastelInstance = null;
+            walletLoaded = false;
+            reject(error);
+          }
+        });
+      }
 
-            document.getElementById("getAddress").addEventListener("click", function() {
-                setCursorToWait();
-                let mode = getMode();
-                let address = pastelInstance.MakeNewAddress(mode);
-                let addressElement = document.createElement("div");
-                addressElement.innerText = `Address ${indNewAddresses}: ${address}`;
-                document.getElementById("addressList").appendChild(addressElement);
+      async function LoadWallet() {
+        if (walletLoaded) {
+          alert("Please logout before opening a new wallet.");
+          return false;
+        }
 
-                // Update select options
-                let selectElement = document.getElementById("addressIndexList");
-                let optionElement = document.createElement("option");
-                optionElement.text = indNewAddresses;
-                optionElement.value = indNewAddresses;
-                selectElement.appendChild(optionElement);
+        try {
+          const serializedWallet = await selectAndReadWalletFile();
+          if (serializedWallet) {
+            await importWallet(serializedWallet, true);
+            return true;
+          } else {
+            alert("Wallet file is empty!");
+          }
+        } catch (error) {
+          console.error("Error loading wallet:", error);
+          pastelInstance = null;
+        }
+        return false;
+      }
 
-                indNewAddresses++;
-                setCursorToDefault();
+      function selectAndReadWalletFile() {
+        return new Promise((resolve) => {
+          let fileSelector = document.createElement("input");
+          fileSelector.setAttribute("type", "file");
+          fileSelector.click();
+
+          fileSelector.onchange = (e) => {
+            let file = e.target.files[0];
+            let reader = new FileReader();
+
+            reader.onload = () => {
+              const arrayBuffer = reader.result;
+              const uint8Array = new Uint8Array(arrayBuffer);
+              resolve(uint8Array);
+            };
+            reader.onerror = () => {
+              resolve(null);
+            };
+            reader.readAsArrayBuffer(file); // Read as ArrayBuffer to handle binary data
+          };
+        });
+      }
+
+      async function updatePastelIDSelect() {
+        const pastelIDIndexLists =
+          document.querySelectorAll("#pastelIDIndexList");
+        pastelIDIndexLists.forEach((selectElement) => {
+          selectElement.innerHTML = ""; // Clear existing options
+
+          let index = 0;
+          let continueFetching = true;
+          while (continueFetching) {
+            try {
+              const pastelIDObj = parseWasmResponse(() =>
+                pastelInstance.GetPastelIDByIndex(index, "PastelID")
+              );
+              const pastelID = pastelIDObj.data;
+              let optionElement = document.createElement("option");
+              optionElement.text = pastelID;
+              optionElement.value = pastelID;
+              selectElement.appendChild(optionElement);
+              index++;
+            } catch (e) {
+              continueFetching = false; // No more pastelIDs
+            }
+          }
+        });
+      }
+
+      Module.onRuntimeInitialized = function () {
+        pastelInstance = new Module.Pastel();
+        console.log(pastelInstance);
+
+        document
+          .getElementById("makeNewWallet")
+          .addEventListener("click", async function () {
+            setCursorToWait();
+            let password = prompt("Please enter password", "");
+            if (!password) {
+              alert("Password is required!");
+              setCursorToDefault();
+              return;
+            }
+            let filename = prompt("Please enter the file name", "wallet.dat");
+            if (!filename) {
+              alert("File name is required!");
+              setCursorToDefault();
+              return;
+            }
+            let mnemonic = pastelInstance.CreateNewWallet(password);
+            document.getElementById("mnemonic").innerText = mnemonic;
+            walletLoaded = true; // Set the flag to true when a new wallet is created
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("exportWalletButton")
+          .addEventListener("click", () => {
+            setCursorToWait();
+            let filename = prompt("Please enter the file name", "wallet.dat");
+            if (!filename) {
+              alert("File name is required!");
+              setCursorToDefault();
+              return;
+            }
+            let content = pastelInstance.ExportWallet();
+            let blob = new Blob([content], {
+              type: "application/octet-stream",
             });
+            let url = window.URL.createObjectURL(blob);
+            let fileLink = document.createElement("a");
 
-            document.getElementById("getAddressWInd").addEventListener("click", function() {
-                setCursorToWait();
-                let mode = getMode();
-                let index = parseInt(document.getElementById("addressIndexList").value);
-                try {
-                    let address = pastelInstance.GetAddress(index, mode);
-                    let addressElement = document.createElement("div");
-                    addressElement.innerText = `Address ${index}: ${address}`;
-                    document.getElementById("addressListWInd").appendChild(addressElement);
-                } catch (e) {
-                    alert(`No more addresses - ${index}`);
-                }
-                setCursorToDefault();
-            });
+            fileLink.href = url;
+            fileLink.download = filename;
+            fileLink.click(); // start download
+            setCursorToDefault();
+          });
 
-            document.getElementById("getPastelID").addEventListener("click", function() {
-                setCursorToWait();
-                let paslteID = pastelInstance.MakeNewPastelID();
-                let paslteIDElement = document.createElement("div");
-                paslteIDElement.innerText = `Address ${indNewPastelID}: ${paslteID}`;
-                document.getElementById("pastelidList").appendChild(paslteIDElement);
+        document
+          .getElementById("importWalletButton")
+          .addEventListener("click", async () => {
+            setCursorToWait();
+            await LoadWallet();
+            await updatePastelIDSelect();
+            setCursorToDefault();
+          });
 
-                // Update select options
-                let selectElement = document.getElementById("pastelIDIndexList");
-                let optionElement = document.createElement("option");
-                optionElement.text = indNewPastelID;
-                optionElement.value = indNewPastelID;
-                selectElement.appendChild(optionElement);
+        function getMode() {
+          let selectedMode = document.getElementById("networkMode").value;
+          let mode = Module.NetworkMode[selectedMode];
+          return mode;
+        }
 
-                indNewPastelID++;
-                setCursorToDefault();
-            });
+        document
+          .getElementById("getAddress")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            let mode = getMode();
+            let address = pastelInstance.MakeNewAddress(mode);
+            let addressElement = document.createElement("div");
+            addressElement.innerText = `Address ${indNewAddresses}: ${address}`;
+            document.getElementById("addressList").appendChild(addressElement);
 
-            document.getElementById("getPastelIDWInd").addEventListener("click", function() {
-                setCursorToWait();
-                let index = parseInt(document.getElementById("pastelIDIndexList").value);
-                let selectedType = document.getElementById("pastelIDType").value;
-                try {
-                    console.log(index, selectedType)
-                    console.log(Module.PastelIDType);
-                    let type = Module.PastelIDType[selectedType];
+            // Update select options
+            let selectElement = document.getElementById("addressIndexList");
+            let optionElement = document.createElement("option");
+            optionElement.text = indNewAddresses;
+            optionElement.value = indNewAddresses;
+            selectElement.appendChild(optionElement);
 
-                    let pastelID = pastelInstance.GetPastelIDByIndex(index, type);
-                    let pastelIDElement = document.createElement("div");
-                    pastelIDElement.innerText = `PastelID ${index}: ${pastelID}`;
-                    document.getElementById("pastelIDListWInd").appendChild(pastelIDElement);
-                } catch (e) {
-                    alert(`No more pastelIDs - ${index}`);
-                }
-                setCursorToDefault();
-            });
-        };
+            indNewAddresses++;
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("getAddressWInd")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            let mode = getMode();
+            let index = parseInt(
+              document.getElementById("addressIndexList").value
+            );
+            try {
+              let address = pastelInstance.GetAddress(index, mode);
+              let addressElement = document.createElement("div");
+              addressElement.innerText = `Address ${index}: ${address}`;
+              document
+                .getElementById("addressListWInd")
+                .appendChild(addressElement);
+            } catch (e) {
+              alert(`No more addresses - ${index}`);
+            }
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("getPastelID")
+          .addEventListener("click", async function () {
+            setCursorToWait();
+            try {
+              let pastelIDObj = await parseWasmResponse(() =>
+                pastelInstance.MakeNewPastelID()
+              );
+              let pastelID = pastelIDObj.data;
+              let pastelIDElement = document.createElement("div");
+              pastelIDElement.innerText = `PastelID ${indNewPastelID}: ${pastelID}`;
+              document
+                .getElementById("pastelidList")
+                .appendChild(pastelIDElement);
+
+              indNewPastelID++;
+              await updatePastelIDSelect();
+            } catch (e) {
+              alert(`Error creating new PastelID: ${e}`);
+            }
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("getPastelIDWInd")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            let index = parseInt(
+              document.getElementById("pastelIDIndex").value
+            );
+            let selectedType = document.getElementById("pastelIDType").value;
+            try {
+              let type = Module.PastelIDType[selectedType];
+              let pastelIDObj = pastelInstance.GetPastelIDByIndex(index, type);
+              let pastelID = pastelIDObj.data;
+              let pastelIDElement = document.createElement("div");
+              pastelIDElement.innerText = `PastelID ${index}: ${pastelID}`;
+              document
+                .getElementById("pastelIDListWInd")
+                .appendChild(pastelIDElement);
+            } catch (e) {
+              alert(`No more pastelIDs - ${index}`);
+            }
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("signMessage")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            let pastelID = document.querySelector(
+              "#signMessageContainer #pastelIDIndexList"
+            ).value;
+            let message = document.getElementById("messageToSign").value;
+            try {
+              let signature = pastelInstance.SignWithPastelID(
+                pastelID,
+                message,
+                "PastelID",
+                "Mainnet"
+              );
+              document.getElementById("signature").innerText = signature;
+            } catch (e) {
+              alert(`Error signing message: ${e}`);
+            }
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("verifyMessage")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            let pastelID = document.getElementById("pastelIDToVerify").value;
+            let message = document.getElementById("messageToVerify").value;
+            let signature = document.getElementById("signatureToVerify").value;
+            try {
+              let isValid = pastelInstance.VerifyWithPastelID(
+                pastelID,
+                message,
+                signature,
+                "Mainnet"
+              );
+              document.getElementById("verificationResult").innerText = isValid
+                ? "Valid signature"
+                : "Invalid signature";
+            } catch (e) {
+              alert(`Error verifying signature: ${e}`);
+            }
+            setCursorToDefault();
+          });
+
+        // Additional sample forms for other methods
+        document
+          .getElementById("exportPastelIDKeys")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            let pastelID = prompt("Please enter the PastelID");
+            let type = prompt("Please enter the type (PastelID or LegRoast)");
+            let password = prompt("Please enter the password");
+            try {
+              let keys = pastelInstance.ExportPastelIDKeys(
+                pastelID,
+                type,
+                password
+              );
+              document.getElementById("exportedKeys").innerText = keys;
+            } catch (e) {
+              alert(`Error exporting keys: ${e}`);
+            }
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("getWalletPubKey")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            try {
+              let pubKey = pastelInstance.GetWalletPubKey();
+              document.getElementById("walletPubKey").innerText = pubKey;
+            } catch (e) {
+              alert(`Error getting wallet pub key: ${e}`);
+            }
+            setCursorToDefault();
+          });
+
+        document
+          .getElementById("getAddresses")
+          .addEventListener("click", function () {
+            setCursorToWait();
+            try {
+              let addresses = pastelInstance.GetAddresses();
+              document.getElementById("addresses").innerText =
+                addresses.join("\n");
+            } catch (e) {
+              alert(`Error getting addresses: ${e}`);
+            }
+            setCursorToDefault();
+          });
+      };
     </script>
-</head>
-<body>
-<button id="makeNewWallet">Make New Wallet</button>
-<button id="exportWalletButton">Export Wallet</button>
-<button id="importWalletButton">Import Wallet</button>
-<div id="mnemonic"></div>
-<hr/>
-<select id="networkMode">
-    <option value="Mainnet">Mainnet</option>
-    <option value="Testnet">Testnet</option>
-    <option value="Devnet">Devnet</option>
-</select>
-<br/>
-<br/>
-<button id="getAddress">Make New Address</button>
-<div id="addressList"></div>
-<br/>
-<select id="addressIndexList"></select>
-<button id="getAddressWInd">Get Existing Address by index</button>
-<div id="addressListWInd"></div><br/>
-<hr/>
-<hr/>
-<button id="getPastelID">Make New PastelID</button>
-<div id="pastelidList"></div>
-<br/>
-<select id="pastelIDIndexList"></select>
-<select id="pastelIDType">
-    <option value="PastelID">PastelID</option>
-    <option value="LegRoast">LegRoast</option>
-</select>
-<button id="getPastelIDWInd">Get Existing PastelID by index</button>
-<div id="pastelIDListWInd"></div><br/>
-<hr/>
-<hr/>
-</body>
+  </head>
+  <body class="bg-gray-100 text-gray-800 p-8">
+    <div class="container mx-auto space-y-8">
+      <h1 class="text-4xl font-bold text-center mb-8">Pastel Wallet Manager</h1>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Wallet Management</h2>
+        <div class="space-y-4">
+          <button
+            id="makeNewWallet"
+            class="bg-blue-500 text-white px-4 py-2 rounded"
+          >
+            Make New Wallet
+          </button>
+          <button
+            id="exportWalletButton"
+            class="bg-green-500 text-white px-4 py-2 rounded"
+          >
+            Export Wallet
+          </button>
+          <button
+            id="importWalletButton"
+            class="bg-yellow-500 text-white px-4 py-2 rounded"
+          >
+            Import Wallet
+          </button>
+          <div id="mnemonic" class="mt-4 p-4 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Network Mode</h2>
+        <select id="networkMode" class="border p-2 rounded w-full">
+          <option value="Mainnet">Mainnet</option>
+          <option value="Testnet">Testnet</option>
+          <option value="Devnet">Devnet</option>
+        </select>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Address Management</h2>
+        <div class="space-y-4">
+          <button
+            id="getAddress"
+            class="bg-blue-500 text-white px-4 py-2 rounded"
+          >
+            Make New Address
+          </button>
+          <div id="addressList" class="mt-4 p-4 bg-gray-200 rounded"></div>
+          <select
+            id="addressIndexList"
+            class="border p-2 rounded w-full"
+          ></select>
+          <button
+            id="getAddressWInd"
+            class="bg-green-500 text-white px-4 py-2 rounded"
+          >
+            Get Existing Address by Index
+          </button>
+          <div id="addressListWInd" class="mt-4 p-4 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">PastelID Management</h2>
+        <div class="space-y-4">
+          <button
+            id="getPastelID"
+            class="bg-blue-500 text-white px-4 py-2 rounded"
+          >
+            Make New PastelID
+          </button>
+          <div id="pastelidList" class="mt-4 p-4 bg-gray-200 rounded"></div>
+          <select
+            id="pastelIDIndexList"
+            class="border p-2 rounded w-full"
+          ></select>
+          <select id="pastelIDType" class="border p-2 rounded w-full">
+            <option value="PastelID">PastelID</option>
+            <option value="LegRoast">LegRoast</option>
+          </select>
+          <input
+            type="number"
+            id="pastelIDIndex"
+            class="border p-2 rounded w-full"
+            placeholder="Enter PastelID Index"
+          />
+          <button
+            id="getPastelIDWInd"
+            class="bg-green-500 text-white px-4 py-2 rounded"
+          >
+            Get Existing PastelID by Index
+          </button>
+          <div id="pastelIDListWInd" class="mt-4 p-4 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+
+      <div id="signMessageContainer" class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Sign Message with PastelID</h2>
+        <select
+          id="pastelIDIndexList"
+          class="border p-2 rounded w-full"
+        ></select>
+        <textarea
+          id="messageToSign"
+          rows="4"
+          class="border p-2 rounded w-full mt-4"
+        ></textarea>
+        <button
+          id="signMessage"
+          class="bg-blue-500 text-white px-4 py-2 rounded mt-4"
+        >
+          Sign Message
+        </button>
+        <div id="signature" class="mt-4 p-4 bg-gray-200 rounded"></div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">
+          Verify Message Using PastelID
+        </h2>
+        <label for="pastelIDToVerify" class="block mb-2">PastelID:</label>
+        <input
+          type="text"
+          id="pastelIDToVerify"
+          class="border p-2 rounded w-full mb-4"
+        />
+        <label for="messageToVerify" class="block mb-2">Message:</label>
+        <textarea
+          id="messageToVerify"
+          rows="4"
+          class="border p-2 rounded w-full mb-4"
+        ></textarea>
+        <label for="signatureToVerify" class="block mb-2">Signature:</label>
+        <input
+          type="text"
+          id="signatureToVerify"
+          class="border p-2 rounded w-full mb-4"
+        />
+        <button
+          id="verifyMessage"
+          class="bg-green-500 text-white px-4 py-2 rounded"
+        >
+          Verify Message
+        </button>
+        <div id="verificationResult" class="mt-4 p-4 bg-gray-200 rounded"></div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Export PastelID Keys</h2>
+        <button
+          id="exportPastelIDKeys"
+          class="bg-yellow-500 text-white px-4 py-2 rounded"
+        >
+          Export PastelID Keys
+        </button>
+        <div id="exportedKeys" class="mt-4 p-4 bg-gray-200 rounded"></div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Get Wallet Public Key</h2>
+        <button
+          id="getWalletPubKey"
+          class="bg-yellow-500 text-white px-4 py-2 rounded"
+        >
+          Get Wallet Public Key
+        </button>
+        <div id="walletPubKey" class="mt-4 p-4 bg-gray-200 rounded"></div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4">Get Addresses</h2>
+        <button
+          id="getAddresses"
+          class="bg-yellow-500 text-white px-4 py-2 rounded"
+        >
+          Get Addresses
+        </button>
+        <div id="addresses" class="mt-4 p-4 bg-gray-200 rounded"></div>
+      </div>
+    </div>
+  </body>
 </html>
