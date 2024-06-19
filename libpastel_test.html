@@ -120,9 +120,10 @@
           let continueFetching = true;
           while (continueFetching) {
             try {
-              const pastelIDObj = parseWasmResponse(() =>
+              const pastelIDObjString = parseWasmResponse(() =>
                 pastelInstance.GetPastelIDByIndex(index, "PastelID")
               );
+              const pastelIDObj = JSON.parse(pastelIDObjString);
               const pastelID = pastelIDObj.data;
               let optionElement = document.createElement("option");
               optionElement.text = pastelID;
@@ -247,9 +248,10 @@
           .addEventListener("click", async function () {
             setCursorToWait();
             try {
-              let pastelIDObj = await parseWasmResponse(() =>
+              let pastelIDObjString = await parseWasmResponse(() =>
                 pastelInstance.MakeNewPastelID()
               );
+              let pastelIDObj = JSON.parse(pastelIDObjString);
               let pastelID = pastelIDObj.data;
               let pastelIDElement = document.createElement("div");
               pastelIDElement.innerText = `PastelID ${indNewPastelID}: ${pastelID}`;
@@ -257,7 +259,12 @@
                 .getElementById("pastelidList")
                 .appendChild(pastelIDElement);
 
+              let pastelIDindexElement =
+                document.getElementById("pastelIDIndex");
+              // Set value of index to the index
+              pastelIDindexElement.value = indNewPastelID;
               indNewPastelID++;
+
               await updatePastelIDSelect();
             } catch (e) {
               alert(`Error creating new PastelID: ${e}`);
@@ -275,7 +282,11 @@
             let selectedType = document.getElementById("pastelIDType").value;
             try {
               let type = Module.PastelIDType[selectedType];
-              let pastelIDObj = pastelInstance.GetPastelIDByIndex(index, type);
+              let pastelIDObjString = pastelInstance.GetPastelIDByIndex(
+                index,
+                type
+              );
+              let pastelIDObj = JSON.parse(pastelIDObjString);
               let pastelID = pastelIDObj.data;
               let pastelIDElement = document.createElement("div");
               pastelIDElement.innerText = `PastelID ${index}: ${pastelID}`;
@@ -363,20 +374,6 @@
               document.getElementById("walletPubKey").innerText = pubKey;
             } catch (e) {
               alert(`Error getting wallet pub key: ${e}`);
-            }
-            setCursorToDefault();
-          });
-
-        document
-          .getElementById("getAddresses")
-          .addEventListener("click", function () {
-            setCursorToWait();
-            try {
-              let addresses = pastelInstance.GetAddresses();
-              document.getElementById("addresses").innerText =
-                addresses.join("\n");
-            } catch (e) {
-              alert(`Error getting addresses: ${e}`);
             }
             setCursorToDefault();
           });
@@ -550,17 +547,6 @@
           Get Wallet Public Key
         </button>
         <div id="walletPubKey" class="mt-4 p-4 bg-gray-200 rounded"></div>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow-lg">
-        <h2 class="text-2xl font-semibold mb-4">Get Addresses</h2>
-        <button
-          id="getAddresses"
-          class="bg-yellow-500 text-white px-4 py-2 rounded"
-        >
-          Get Addresses
-        </button>
-        <div id="addresses" class="mt-4 p-4 bg-gray-200 rounded"></div>
       </div>
     </div>
   </body>
