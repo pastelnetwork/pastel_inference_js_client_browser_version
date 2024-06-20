@@ -36,30 +36,6 @@
         }
       }
 
-      function base58Decode(string) {
-        const alphabet =
-          "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-        const base = 58;
-        let decoded = BigInt(0);
-        let multi = BigInt(1);
-
-        for (let i = string.length - 1; i >= 0; i--) {
-          const value = BigInt(alphabet.indexOf(string[i]));
-          if (value === -1n) throw new Error("Invalid Base58 character");
-          decoded += value * multi;
-          multi *= BigInt(base);
-        }
-
-        const buffer = [];
-        while (decoded >= 256) {
-          buffer.push(Number(decoded % 256n));
-          decoded /= 256n;
-        }
-        buffer.push(Number(decoded));
-
-        return new Uint8Array(buffer.reverse());
-      }
-
       async function importWallet(serializedWallet, unlock = false) {
         return new Promise((resolve, reject) => {
           try {
@@ -73,14 +49,24 @@
               }
             }
             pastelInstance = new Module.Pastel();
-            const decodedWallet = base58Decode(serializedWallet);
-            parseWasmResponse(() => pastelInstance.ImportWallet(decodedWallet));
+
+            // Parse the JSON structure
+            const walletData = JSON.parse(serializedWallet);
+            if (!walletData.data) {
+              throw new Error("Invalid wallet file structure");
+            }
+
+            // Use the data directly without any decoding
+            parseWasmResponse(() =>
+              pastelInstance.ImportWallet(walletData.data)
+            );
             if (unlock) {
               parseWasmResponse(() => pastelInstance.UnlockWallet(password));
             }
             walletLoaded = true;
             resolve();
           } catch (error) {
+            console.error("Error importing wallet:", error);
             alert("Invalid wallet file! - " + error);
             pastelInstance = null;
             walletLoaded = false;
@@ -99,12 +85,14 @@
           const serializedWallet = await selectAndReadWalletFile();
           if (serializedWallet) {
             await importWallet(serializedWallet, true);
+            await updatePastelIDSelect();
             return true;
           } else {
             alert("Wallet file is empty!");
           }
         } catch (error) {
           console.error("Error loading wallet:", error);
+          alert("Error loading wallet: " + error.message);
           pastelInstance = null;
         }
         return false;
@@ -121,15 +109,13 @@
             let reader = new FileReader();
 
             reader.onload = () => {
-              const arrayBuffer = reader.result;
-              const uint8Array = new Uint8Array(arrayBuffer);
-              const base58String = new TextDecoder().decode(uint8Array);
-              resolve(base58String);
+              const content = reader.result;
+              resolve(content);
             };
             reader.onerror = () => {
               resolve(null);
             };
-            reader.readAsArrayBuffer(file);
+            reader.readAsText(file);
           };
         });
       }
@@ -198,17 +184,44 @@
               setCursorToDefault();
               return;
             }
-            let content = pastelInstance.ExportWallet();
-            let blob = new Blob([content], {
-              type: "application/octet-stream",
-            });
-            let url = window.URL.createObjectURL(blob);
-            let fileLink = document.createElement("a");
+            try {
+              console.log("Exporting wallet...");
+              let content = parseWasmResponse(() =>
+                pastelInstance.ExportWallet()
+              );
+              console.log("Wallet content type:", typeof content);
+              console.log("Wallet content length:", content.length);
 
-            fileLink.href = url;
-            fileLink.download = filename;
-            fileLink.click();
-            setCursorToDefault();
+              if (!content || content.length === 0) {
+                throw new Error("Exported wallet content is empty");
+              }
+
+              // Parse the content returned by ExportWallet
+              let parsedContent = JSON.parse(content);
+
+              // Create a new object with just the 'data' field
+              let walletData = JSON.stringify({ data: parsedContent.data });
+
+              let blob = new Blob([walletData], { type: "application/json" });
+              console.log("Blob size:", blob.size);
+
+              let url = window.URL.createObjectURL(blob);
+              let fileLink = document.createElement("a");
+
+              fileLink.href = url;
+              fileLink.download = filename;
+              fileLink.click();
+
+              // Clean up
+              window.URL.revokeObjectURL(url);
+
+              console.log("Wallet export completed");
+            } catch (error) {
+              console.error("Error exporting wallet:", error);
+              alert("Failed to export wallet: " + error.message);
+            } finally {
+              setCursorToDefault();
+            }
           });
 
         document
@@ -398,21 +411,38 @@
 
               let allKeys = [];
               for (const pastelID of allPastelIDs) {
-                const pastelIDKeys = parseWasmResponse(() =>
+                const pastelIDFilePath = `/pastelid_${pastelID}.keys`;
+                const legRoastFilePath = `/legroast_${pastelID}.keys`;
+
+                // Export PastelID keys
+                parseWasmResponse(() =>
                   pastelInstance.ExportPastelIDKeys(
                     pastelID,
-                    "PastelID",
-                    password
+                    password,
+                    pastelIDFilePath
                   )
                 );
-                const legRoastKeys = parseWasmResponse(() =>
+                const pastelIDKeys = Module.FS.readFile(pastelIDFilePath, {
+                  encoding: "utf8",
+                });
+
+                // Export LegRoast keys
+                parseWasmResponse(() =>
                   pastelInstance.ExportPastelIDKeys(
                     pastelID,
-                    "LegRoast",
-                    password
+                    password,
+                    legRoastFilePath
                   )
                 );
+                const legRoastKeys = Module.FS.readFile(legRoastFilePath, {
+                  encoding: "utf8",
+                });
+
                 allKeys.push({ pastelID, pastelIDKeys, legRoastKeys });
+
+                // Clean up temporary files
+                Module.FS.unlink(pastelIDFilePath);
+                Module.FS.unlink(legRoastFilePath);
               }
 
               const blob = new Blob([JSON.stringify(allKeys, null, 2)], {
