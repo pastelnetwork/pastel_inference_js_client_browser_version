@@ -12,8 +12,6 @@
   });
 })(document);
 
-const ping = require("ping");
-const Sequelize = require("sequelize");
 const { safeStringify } = require("./logger");
 
 const logger = console;
@@ -40,6 +38,24 @@ class SupernodeCache {
 
 const supernodeCacheStorage = new SupernodeCache();
 
+async function pingIPAddress(ipAddress, maxResponseTimeInMilliseconds = 800) {
+  try {
+    const { data } = await axios.post('/ping-ip', {
+      ipAddress,
+      timeout: maxResponseTimeInMilliseconds,
+    });
+    return data // return { time: 12 }
+  } catch (error) {
+    return {
+      time: -1
+    };
+  }
+}
+
+function isSequelizeModel(data) {
+  return !!data?.sequelize?.queryInterface && !!data?.sequelize?.models && !!data?.sequelize?.modelManager && !!data?.sequelize?.connectionManager?.sequelize && typeof data.get === "function"
+}
+
 function createHash(input) {
   const hash = CryptoJS.SHA3(input, { outputLength: 256 });
   return hash.toString(CryptoJS.enc.Hex);
@@ -63,7 +79,6 @@ const MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS = parseInt(
   env.MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS
 );
 
-// Done
 async function fetchCurrentPSLMarketPrice() {
   async function checkPrices() {
     try {
@@ -105,7 +120,6 @@ async function fetchCurrentPSLMarketPrice() {
   return averagePrice;
 }
 
-// Done
 async function estimatedMarketPriceOfInferenceCreditsInPSLTerms() {
   try {
     const pslPriceUSD = await fetchCurrentPSLMarketPrice();
@@ -128,7 +142,6 @@ async function estimatedMarketPriceOfInferenceCreditsInPSLTerms() {
   }
 }
 
-// Done
 function parseAndFormat(value) {
   try {
     if (typeof value === "string") {
@@ -144,9 +157,8 @@ function parseAndFormat(value) {
   }
 }
 
-// TODO:
 function prettyJSON(data) {
-  if (data instanceof Sequelize.Model) {
+  if (isSequelizeModel(data)) {
     data = data.get({ plain: true });
   }
   if (data instanceof Map) {
@@ -170,7 +182,6 @@ function prettyJSON(data) {
   return data;
 }
 
-// Done
 function abbreviateJSON(jsonString, maxLength) {
   if (jsonString.length <= maxLength) return jsonString;
   const abbreviated = jsonString.slice(0, maxLength) + "...";
@@ -183,7 +194,6 @@ function abbreviateJSON(jsonString, maxLength) {
   return abbreviated + "}".repeat(openBraces) + "]".repeat(openBrackets);
 }
 
-// Done
 function logActionWithPayload(action, payloadName, jsonPayload) {
   const maxPayloadLength = 10000;
   let formattedPayload = prettyJSON(jsonPayload);
@@ -195,7 +205,6 @@ function logActionWithPayload(action, payloadName, jsonPayload) {
   );
 }
 
-// Done
 function transformCreditPackPurchaseRequestResponse(result) {
   const transformedResult = { ...result };
   const fieldsToConvert = [
@@ -211,17 +220,14 @@ function transformCreditPackPurchaseRequestResponse(result) {
   return transformedResult;
 }
 
-// Done
 function computeSHA3256Hexdigest(input) {
   return createHash(input);
 }
 
-// Done
 function getSHA256HashOfInputData(inputData) {
   return createHash(inputData);
 }
 
-// Done
 async function compressDataWithZstd(inputData) {
   const compressedData = pako.deflate(inputData, { to: 'string' });
   const base64EncodedData = btoa(compressedData);
@@ -229,13 +235,11 @@ async function compressDataWithZstd(inputData) {
   return { compressedData, base64EncodedData };
 }
 
-// Done
 async function decompressDataWithZstd(compressedInputData) {
   const decompressedData = pako.inflate(compressedInputData, { to: 'string' });
   return decompressedData;
 }
 
-// Done
 async function calculateXORDistance(pastelID1, pastelID2) {
   const hash1 = createHash(pastelID1);
   const hash2 = createHash(pastelID2);
@@ -243,17 +247,14 @@ async function calculateXORDistance(pastelID1, pastelID2) {
   return xorResult;
 }
 
-// Done
 function adjustJSONSpacing(jsonString) {
   return jsonString.replace(/(?<!\d):(\s*)/g, ": ").replace(/,(\s*)/g, ", ");
 }
 
-// Done
 function escapeJsonString(str) {
   return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-// Done
 function pythonCompatibleStringify(obj) {
   function sortObjectByKeys(unsortedObj) {
     const priorityKeys = ["challenge", "challenge_id", "challenge_signature"];
@@ -316,18 +317,16 @@ function pythonCompatibleStringify(obj) {
   return jsonString;
 }
 
-// Done
 function base64EncodeJson(jsonInput) {
   return btoa(pythonCompatibleStringify(JSON.parse(jsonInput)));
 }
 
-// Done
 async function extractResponseFieldsFromCreditPackTicketMessageDataAsJSON(
   modelInstance
 ) {
   const responseFields = {};
   const plainObject =
-    modelInstance instanceof Sequelize.Model
+  isSequelizeModel(modelInstance)
       ? modelInstance.get({ plain: true })
       : modelInstance;
 
@@ -372,7 +371,6 @@ async function extractResponseFieldsFromCreditPackTicketMessageDataAsJSON(
   return pythonCompatibleStringify(responseFields);
 }
 
-// Done
 async function computeSHA3256HashOfSQLModelResponseFields(modelInstance) {
   let responseFieldsJSON =
     await extractResponseFieldsFromCreditPackTicketMessageDataAsJSON(
@@ -383,11 +381,10 @@ async function computeSHA3256HashOfSQLModelResponseFields(modelInstance) {
   return sha256HashOfResponseFields;
 }
 
-// Done
 async function prepareModelForEndpoint(modelInstance) {
   let preparedModelInstance = {};
   let instanceData =
-    typeof modelInstance.get === "function"
+  isSequelizeModel(modelInstance)
       ? modelInstance.get({ plain: true })
       : modelInstance;
   for (const key in instanceData) {
@@ -414,7 +411,6 @@ async function prepareModelForEndpoint(modelInstance) {
   return preparedModelInstance;
 }
 
-// Done
 function removeSequelizeFields(plainObject) {
   const fieldsToRemove = [
     "id",
@@ -432,10 +428,9 @@ function removeSequelizeFields(plainObject) {
   });
 }
 
-// TODO:
 async function prepareModelForValidation(modelInstance) {
   let preparedModelInstance;
-  if (typeof modelInstance.get === "function") {
+  if (isSequelizeModel(modelInstance)) {
     preparedModelInstance = modelInstance.get({ plain: true });
   } else if (typeof modelInstance === "object") {
     preparedModelInstance = { ...modelInstance };
@@ -457,7 +452,6 @@ async function prepareModelForValidation(modelInstance) {
   return preparedModelInstance;
 }
 
-// Done
 function compareDatetimes(datetime1, datetime2) {
   const diffInSeconds = Math.abs(datetime1 - datetime2) / 1000;
   const areCloseEnough =
@@ -466,7 +460,6 @@ function compareDatetimes(datetime1, datetime2) {
   return { diffInSeconds, areCloseEnough };
 }
 
-// Done
 function validateTimestampFields(modelInstance, validationErrors) {
   for (const [fieldName, fieldValue] of Object.entries(modelInstance)) {
     if (fieldName.endsWith("_timestamp_utc_iso_string")) {
@@ -491,7 +484,6 @@ function validateTimestampFields(modelInstance, validationErrors) {
   }
 }
 
-// Done
 async function validatePastelBlockHeightFields(
   modelInstance,
   validationErrors
@@ -513,7 +505,6 @@ async function validatePastelBlockHeightFields(
   }
 }
 
-// Done
 async function validateHashFields(modelInstance, validationErrors) {
   const expectedHash = await computeSHA3256HashOfSQLModelResponseFields(
     modelInstance
@@ -538,7 +529,6 @@ async function validateHashFields(modelInstance, validationErrors) {
   }
 }
 
-// Done
 async function getClosestSupernodePastelIDFromList(
   localPastelID,
   supernodePastelIDs,
@@ -566,13 +556,11 @@ async function getClosestSupernodePastelIDFromList(
   return sortedXorDistances[0].pastelID;
 }
 
-// Done
 function checkIfPastelIDIsValid(inputString) {
   const pattern = /^jX[A-Za-z0-9]{84}$/;
   return pattern.test(inputString);
 }
 
-// Done
 async function getSupernodeUrlFromPastelID(pastelID, supernodeListDF) {
   const isValidPastelID = checkIfPastelIDIsValid(pastelID);
   if (!isValidPastelID) {
@@ -591,7 +579,6 @@ async function getSupernodeUrlFromPastelID(pastelID, supernodeListDF) {
   return supernodeURL;
 }
 
-// Done
 async function validatePastelIDSignatureFields(
   modelInstance,
   validationErrors
@@ -601,7 +588,7 @@ async function validatePastelIDSignatureFields(
   let firstPastelID;
   let pastelID, messageToVerify, signature;
 
-  const fields = modelInstance.dataValues
+  const fields = modelInstance?.dataValues
     ? modelInstance.dataValues
     : modelInstance;
   for (const fieldName in fields) {
@@ -665,7 +652,6 @@ async function validatePastelIDSignatureFields(
   }
 }
 
-// Done
 async function getClosestSupernodeToPastelIDURL(
   inputPastelID,
   supernodeListDF,
@@ -693,7 +679,6 @@ async function getClosestSupernodeToPastelIDURL(
   return { url: null, pastelID: null };
 }
 
-// Done
 async function getNClosestSupernodesToPastelIDURLs(
   n,
   inputPastelID,
@@ -733,7 +718,6 @@ async function getNClosestSupernodesToPastelIDURLs(
   return closestSupernodes.map(({ url, pastelID }) => ({ url, pastelID }));
 }
 
-// Done
 async function validateCreditPackTicketMessageData(modelInstance) {
   const validationErrors = [];
   validateTimestampFields(modelInstance, validationErrors);
@@ -743,7 +727,6 @@ async function validateCreditPackTicketMessageData(modelInstance) {
   return validationErrors;
 }
 
-// Done
 function validateInferenceResponseFields(
   responseAuditResults,
   usageRequestResponse
@@ -887,7 +870,6 @@ function validateInferenceResponseFields(
   return validationResults;
 }
 
-// Done
 function validateInferenceResultFields(resultAuditResults, usageResult) {
   const inferenceResultIDCounts = {};
   const inferenceRequestIDCounts = {};
@@ -996,7 +978,6 @@ function validateInferenceResultFields(resultAuditResults, usageResult) {
   return validationResults;
 }
 
-// Done
 function validateInferenceData(inferenceResultDict, auditResults) {
   const usageRequestResponse = inferenceResultDict.usage_request_response;
   const usageResult = inferenceResultDict.output_results;
@@ -1019,7 +1000,6 @@ function validateInferenceData(inferenceResultDict, auditResults) {
   return validationResults;
 }
 
-// TODO:
 async function filterSupernodesByPingResponseTimeAndPortResponse(
   supernodeList,
   maxResponseTimeInMilliseconds = 800
@@ -1046,10 +1026,8 @@ async function filterSupernodesByPingResponseTimeAndPortResponse(
         const ipAddressPort = supernode.ipaddress_port;
         if (!ipAddressPort) return null;
         const ipAddress = ipAddressPort.split(":")[0];
-        const pingResponse = await ping.promise.probe(ipAddress, {
-          timeout: Math.ceil(maxResponseTimeInMilliseconds / 1000),
-        });
-        if (pingResponse.time > maxResponseTimeInMilliseconds) return null;
+        const pingResponse = await pingIPAddress(ipAddress, Math.ceil(maxResponseTimeInMilliseconds / 1000));
+        if (pingResponse.time > maxResponseTimeInMilliseconds || pingResponse.time === -1) return null;
         await axios.get(`http://${ipAddress}:7123`, {
           timeout: maxResponseTimeInMilliseconds,
         });
