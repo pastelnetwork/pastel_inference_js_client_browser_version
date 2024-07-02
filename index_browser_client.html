@@ -28,6 +28,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.5.1/languages/json.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha3/0.9.3/sha3.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/yup@1.4.0/index.min.js"></script>
     <style>
       .ground-glass {
         background-color: rgba(255, 255, 255, 0.8);
@@ -914,7 +915,11 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
     </div>
 
     <script type="text/javascript" src="libpastel_wasm.js"></script>
-    <script src="pastel_inference_client.js"></script>
+    <script type="text/javascript" src="utility_functions_browser_replacements.js"></script>
+    <script src="logger_browser_cient.js"></script>
+    <script src="validation_schemas_browser_client.js"></script>
+    <script src="pastel_inference_client_browser_client.js"></script>
+    <script src="end_to_end_functions_browser_client.js"></script>
     <script src="rpc_functions_browser_client.js"></script>
     <script>
       const API_URL = 'http://localhost:3100';
@@ -1206,6 +1211,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       function getAddressURL(address) {
         let baseURL = "https://explorer.pastel.network/address/";
         if (address.startsWith("44")) {
@@ -1216,6 +1222,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return `${baseURL}${address}`;
       }
 
+      // Done
       function getTxidURL(trackingAddress, txid) {
         let baseURL = "https://explorer.pastel.network/tx/";
         if (trackingAddress.startsWith("44")) {
@@ -1226,9 +1233,10 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return `${baseURL}${txid}`;
       }
 
+      // Done
       async function checkTrackingAddresses() {
         try {
-          const response = await fetch(`${API_URL}/list-address-amounts`);
+          const response = await listAddressAmounts();
           if (!response.ok) {
             throw new Error("Failed to fetch address amounts");
           }
@@ -1472,13 +1480,9 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           const amountOfPSLForTrackingTransactions = 10.0;
           const creditPriceCushionPercentage = 0.15;
 
-          const estimatedTotalCostInPSLForCreditPackResponse = await axios.post(
-            `${API_URL}/estimate-credit-pack-cost`,
-            {
+          const estimatedTotalCostInPSLForCreditPackResponse = await estimateCreditPackCostEndToEnd(
               desiredNumberOfCredits,
-              creditPriceCushionPercentage,
-            }
-          );
+              creditPriceCushionPercentage);
 
           const estimatedTotalCostInPSLForCreditPack =
             estimatedTotalCostInPSLForCreditPackResponse.data.result;
@@ -1520,9 +1524,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             throw new Error(insufficientFundsMessage);
           }
 
-          const response = await axios.post(`${API_URL}/create-and-fund-new-address`, {
-            amount: amountToFundCreditTrackingAddress,
-          });
+          const response = await createAndFundNewPSLCreditTrackingAddress(amountToFundCreditTrackingAddress);
 
           if (!response.data.success) {
             throw new Error(
@@ -1538,15 +1540,12 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             statusContent
           );
 
-          const ticketResponse = await axios.post(
-            `${API_URL}/create-credit-pack-ticket`,
-            {
-              numCredits,
-              creditUsageTrackingPSLAddress,
-              maxTotalPrice,
-              maxPerCreditPrice,
-            }
-          );
+          const ticketResponse = await createCreditPackTicket({
+            numCredits,
+            creditUsageTrackingPSLAddress,
+            maxTotalPrice,
+            maxPerCreditPrice,
+          });
 
           if (ticketResponse.data.success) {
             logCreateTicketStatusMessage(
@@ -1796,6 +1795,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         );
       }
 
+      // Done
       document.addEventListener("DOMContentLoaded", async () => {
         const noPastelIDContainer = document.getElementById(
           "noPastelIDContainer"
@@ -3250,6 +3250,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         toggle.setAttribute("data-content", "☀");
       }
 
+      // Done
       // Format the values and display them using template literals
       function formatAndDisplay(inputElement) {
         const value = inputElement.value.replace(/,/g, "");
@@ -3478,6 +3479,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         );
       });
 
+      // Done
       document
         .getElementById("exportTerminalButton")
         .addEventListener("click", () => {
@@ -3499,6 +3501,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           document.body.removeChild(link);
         });
 
+      // Done
       document.addEventListener("DOMContentLoaded", () => {
         hljs.highlightAll();
         handleCreditPackSelection();

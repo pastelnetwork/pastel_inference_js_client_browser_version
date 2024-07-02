@@ -12,10 +12,6 @@
   });
 })(document);
 
-const { safeStringify } = require("./logger");
-
-const logger = console;
-
 const env = {
   TARGET_VALUE_PER_CREDIT_IN_USD: 0.01,
   TARGET_PROFIT_MARGIN: 0.15,
