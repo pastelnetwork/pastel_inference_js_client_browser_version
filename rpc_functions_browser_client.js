@@ -366,3 +366,19 @@ async function createCreditPackTicket({
 
   return { success: true, result }
 }
+
+async function getBestSupernodeUrl(userPastelID) {
+  try {
+    const supernodeListDF = await checkSupernodeList();
+    const { url: supernodeURL } = await getClosestSupernodeToPastelIDURL(
+      userPastelID,
+      supernodeListDF.validMasternodeListFullDF
+    );
+    if (!supernodeURL) {
+      throw new Error("No valid supernode URL found.");
+    }
+    return { success: true, supernodeURL };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}

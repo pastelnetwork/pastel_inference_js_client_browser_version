@@ -118,6 +118,53 @@ class PastelInferenceClient {
       ) / 100;
     return estimatedTotalCostOfTicket;
   }
+
+  async getModelMenu(supernodeURL) {
+    try {
+      const response = await axios.get(
+        `${supernodeURL}/get_inference_model_menu`,
+        {
+          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
+        }
+      );
+      return response.data;
+    } catch (error) {
+      logger.error(
+        `Error fetching model menu from Supernode URL: ${supernodeURL}: ${safeStringify(
+          error
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async getUserMessages(supernodeURL) {
+    try {
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const params = {
+        pastelid: this.pastelID,
+        challenge,
+        challenge_id,
+        challenge_signature,
+      };
+      const response = await axios.get(`${supernodeURL}/get_user_messages`, {
+        params,
+        timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
+      });
+      const result = response.data;
+      const validatedResults = await Promise.all(
+        result.map((messageData) => userMessageSchema.validate(messageData))
+      );
+      const userMessageInstances = await UserMessage.bulkCreate(
+        validatedResults
+      );
+      return userMessageInstances;
+    } catch (error) {
+      logger.error(`Error retrieving user messages: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 module.exports = {

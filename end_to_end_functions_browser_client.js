@@ -1,16 +1,3 @@
-async function getCurrentPastelIdAndPassphrase() {
-  try {
-    const pastelID = await localStorage.getItem("MY_LOCAL_PASTELID");
-    const passphrase = await localStorage.getItem("MY_PASTELID_PASSPHRASE");
-    console.log(`Retrieved PastelID: ${pastelID}, Passphrase: ${passphrase}`);
-    return { pastelID: pastelID || "", passphrase: passphrase || "" };
-  } catch (error) {
-    console.error("Error retrieving PastelID and passphrase:", error);
-    return { pastelID: "", passphrase: "" };
-  }
-}
-
-
 async function getCreditPackTicketInfoEndToEnd(creditPackTicketPastelTxid) {
   try {
     const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
@@ -381,6 +368,63 @@ async function handleCreditPackTicketEndToEnd(
     }
   } catch (error) {
     logger.error(`Error in handleCreditPackTicketEndToEnd: ${error.message}`);
+    throw error;
+  }
+}
+
+async function checkForNewIncomingMessages() {
+  try {
+    const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
+    const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
+
+    if (!pastelID || !passphrase) {
+      logger.error("PastelID or passphrase is not set");
+      return [];
+    }
+    const { validMasternodeListFullDF } = await checkSupernodeList();
+
+    logger.info("Retrieving incoming user messages...");
+    logger.info(`My local pastelid: ${inferenceClient.pastelID}`);
+
+    const closestSupernodesToLocal = await getNClosestSupernodesToPastelIDURLs(
+      3,
+      inferenceClient.pastelID,
+      validMasternodeListFullDF
+    );
+    logger.info(
+      `Closest Supernodes to local pastelid: ${closestSupernodesToLocal
+        .map((sn) => `PastelID: ${sn.pastelID}, URL: ${sn.url}`)
+        .join(", ")}`
+    );
+
+    const messageRetrievalTasks = closestSupernodesToLocal.map(({ url }) =>
+      inferenceClient.getUserMessages(url).catch((error) => {
+        logger.warn(
+          `Failed to retrieve messages from supernode ${url}: ${error.message}`
+        );
+        return []; // Return an empty array on error
+      })
+    );
+    const messageLists = await Promise.all(messageRetrievalTasks);
+
+    const uniqueMessages = [];
+    const messageIDs = new Set();
+    for (const messageList of messageLists) {
+      for (const message of messageList) {
+        if (!messageIDs.has(message.id)) {
+          uniqueMessages.push(message);
+          messageIDs.add(message.id);
+        }
+      }
+    }
+
+    logger.info(
+      `Retrieved unique user messages: ${safeStringify(uniqueMessages)}`
+    );
+
+    return uniqueMessages;
+  } catch (error) {
+    logger.error(`Error in checkForNewIncomingMessages: ${error.message}`);
     throw error;
   }
 }

@@ -915,6 +915,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
     </div>
 
     <script type="text/javascript" src="libpastel_wasm.js"></script>
+    <script type="text/javascript" src="storage_browser_client.js"></script>
     <script type="text/javascript" src="utility_functions_browser_replacements.js"></script>
     <script src="logger_browser_cient.js"></script>
     <script src="validation_schemas_browser_client.js"></script>
@@ -1607,9 +1608,40 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       // Handle inference request stuff:
       let modelMenu = null;
 
+      // Done
+      async function getInferenceModelMenu() {
+        try {
+          const pastelData = await getCurrentPastelIdAndPassphrase();
+
+          if (!pastelData.pastelID || !pastelData.passphrase) {
+            return {
+              success: false,
+              message: "Pastel ID and passphrase not set.",
+            };
+          }
+          const { validMasternodeListFullDF } = await checkSupernodeList();
+          const result = await getClosestSupernodeToPastelIDURL(
+            pastelData.pastelID,
+            validMasternodeListFullDF
+          );
+          if (result) {
+            supernodeURL = result.url;
+          }
+          const inferenceClient = new PastelInferenceClient(pastelData.pastelID, pastelData.passphrase);
+          const modelMenu = await inferenceClient.getModelMenu(
+            supernodeURL
+          );
+          return { success: true, modelMenu }
+        } catch (error) {
+          logger.error(`Error in getInferenceModelMenu: ${safeStringify(error)}`);
+          return { success: false, error: error.message };
+        }
+      }
+
+      // Done
       async function fetchModelMenu() {
         try {
-          const response = await axios.get(`${API_URL}/get-inference-model-menu`);
+          const response = await getInferenceModelMenu();
           modelMenu = response.data.modelMenu;
           console.log("Model Menu:", modelMenu); // Debugging line, consider removing for production
           populateModelDropdown();
@@ -1619,6 +1651,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       function handleModelChange() {
         const selectedModelName = document.getElementById("model").value;
         const selectedModel = modelMenu.models.find(
@@ -1630,6 +1663,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       function generateModelParameterFields(selectedModel) {
         const modelParametersContainer = document.getElementById(
           "modelParametersContainer"
@@ -1710,6 +1744,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         });
       }
 
+      // Done
       function populateModelDropdown() {
         const selectedInferenceType = inferenceTypeSelect.value;
         const modelSelect = document.getElementById("model");
@@ -1759,11 +1794,13 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       function displayError(message) {
         // Implement user-friendly error handling/display mechanism
         alert(message); // Simplistic example, consider more sophisticated modal or notification systems
       }
 
+      // Done
       // Load inference request settings from localStorage
       function loadInferenceRequestSettings() {
         const selectedInferenceType = inferenceTypeSelect.value;
@@ -1780,6 +1817,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       // Save inference request settings to localStorage
       function saveInferenceRequestSettings() {
         const selectedInferenceType = inferenceTypeSelect.value;
@@ -1910,6 +1948,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       });
 
+      // Done
       document.addEventListener("DOMContentLoaded", async () => {
         const pastelIDDropdown = document.getElementById("pastelIDDropdown");
         const passphraseContainer = document.getElementById(
@@ -1965,12 +2004,9 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
 
           try {
-            const response = await axios.post(`${API_URL}/set-pastel-id-passphrase`, {
-              pastelID: selectedPastelID,
-              passphrase: passphrase,
-            });
+            const response = await setPastelIdAndPassphrase(selectedPastelID,passphrase);
 
-            if (response.data.success) {
+            if (response.success) {
               document.getElementById("messageContainer").innerText =
                 "Successfully set PastelID and passphrase!";
             } else {
@@ -2012,6 +2048,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       });
 
+      // Done
       async function refreshCreditPackTickets() {
         const refreshButton = document.getElementById("refreshButton");
         const loader = refreshButton.querySelector(".loader");
@@ -2040,6 +2077,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         "imageGenerationSettings"
       );
 
+      // Done
       inferenceTypeSelect.addEventListener("change", () => {
         const selectedInferenceType =
           document.getElementById("inferenceType").value;
@@ -2085,6 +2123,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         .getElementById("model")
         .addEventListener("change", handleModelChange);
 
+      // Done
       function handleCreditPackSelection() {
         const radioButtons = document.querySelectorAll(
           'input[name="creditPackTicket"]'
@@ -2104,6 +2143,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         });
       }
 
+      // Done
       document
         .getElementById("copyAddressButton")
         .addEventListener("click", () => {
@@ -2145,6 +2185,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
+      // Done
       document.addEventListener("DOMContentLoaded", () => {
         handleCreditPackSelection();
       });
@@ -2152,6 +2193,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       let displayInferenceRequestLoggerMessages = false;
       let displayCreateTicketLoggerMessages = false;
 
+      // Done
       async function saveInferenceRequestToLocalStorage(requestData) {
         let requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2212,6 +2254,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         updatePreviousRequestsList();
       }
 
+      // Done
       async function compressGeneratedImage(imgElement) {
         try {
           const options = {
@@ -2240,6 +2283,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           throw error;
         }
       }
+
+      // Done
       async function compressImage(imageBlob) {
         try {
           const compressedFile = await imageCompression(imageBlob, {
@@ -2262,6 +2307,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       function updatePreviousRequestsList() {
         const requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2328,6 +2374,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       function deleteRequest(index) {
         let requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2336,6 +2383,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         updatePreviousRequestsList();
       }
 
+      // Done
       function exportRequests() {
         const requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2397,6 +2445,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
 
       updatePreviousRequestsList();
 
+      // Done
       function displayRequestPreview(index) {
         const requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2532,6 +2581,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         renderMarkdown();
       }
 
+      // Done
       function downloadZip(zipUrl) {
         const link = document.createElement("a");
         link.href = zipUrl;
@@ -2835,6 +2885,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       async function decompressJsonFromZip(zipUrl) {
         const response = await fetch(zipUrl);
         const blob = await response.blob();
@@ -2851,10 +2902,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           const userPastelID =
             document.getElementById("pastelIDDropdown").value;
 
-          const response = await axios.get(`${API_URL}/get-best-supernode-url`, {
-            params: { userPastelID },
-          });
-          const supernodeURL = response.data.supernodeURL;
+          const response = await getBestSupernodeUrl(userPastelID);
+          const supernodeURL = response.supernodeURL;
           const closestSupernodeIP = supernodeURL.match(
             /(?:https?:\/\/)?([^:/]+)/i
           )[1];
