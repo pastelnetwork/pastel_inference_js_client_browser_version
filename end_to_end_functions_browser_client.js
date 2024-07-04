@@ -1,3 +1,5 @@
+const { v4: uuidv4 } = UUID;
+
 async function getCreditPackTicketInfoEndToEnd(creditPackTicketPastelTxid) {
   try {
     const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
@@ -80,7 +82,8 @@ async function handleCreditPackTicketEndToEnd(
     const { validMasternodeListFullDF } = await checkSupernodeList();
     const requestTimestamp = getIsoStringWithMicroseconds();
 
-    const creditPackRequest = CreditPackPurchaseRequest.build({
+    const creditPackRequest = {
+      id: uuidv4(),
       requesting_end_user_pastelid: pastelID,
       requested_initial_credits_in_credit_pack: parseInt(numberOfCredits, 10),
       list_of_authorized_pastelids_allowed_to_use_credit_pack: JSON.stringify([
@@ -95,7 +98,7 @@ async function handleCreditPackTicketEndToEnd(
       credit_purchase_request_message_version_string: "1.0",
       sha3_256_hash_of_credit_pack_purchase_request_fields: "",
       requesting_end_user_pastelid_signature_on_request_hash: "",
-    });
+    };
 
     creditPackRequest.sha3_256_hash_of_credit_pack_purchase_request_fields =
       await computeSHA3256HashOfSQLModelResponseFields(creditPackRequest);
@@ -117,6 +120,7 @@ async function handleCreditPackTicketEndToEnd(
       "Closest supernode URL for credit pack request:",
       highestRankedSupernodeURL
     );
+
 
     const preliminaryPriceQuote =
       await inferenceClient.creditPackTicketInitialPurchaseRequest(

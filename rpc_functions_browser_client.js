@@ -382,3 +382,40 @@ async function getBestSupernodeUrl(userPastelID) {
     return { success: false, error: error.message };
   }
 }
+
+async function importPrivKey(privateKey) {
+  try {
+    // Note: The sample doesn't show a direct equivalent. This might need to be implemented differently.
+    parseWasmResponse(() => pastelInstance.ImportPrivateKey(privateKey));
+    return true;
+  } catch (error) {
+    logger.error(`Error in importPrivKey: ${safeStringify(error)}`);
+    throw error;
+  }
+}
+
+async function importWallet(filename) {
+  try {
+    parseWasmResponse(() => pastelInstance.importwallet(filename));
+    return true;
+  } catch (error) {
+    logger.error(`Error in importWallet: ${safeStringify(error)}`);
+    throw error;
+  }
+}
+
+async function getWalletInfo() {
+  try {
+    const isConnectionReady = await waitForRPCConnection();
+    if (!isConnectionReady) {
+      logger.error("RPC connection is not available. Cannot proceed.");
+      return;
+    }
+    const result = parseWasmResponse(() => pastelInstance.getwalletinfo());
+    logger.info("Got wallet info");
+    return result;
+  } catch (error) {
+    logger.error(`Error getting wallet info: ${safeStringify(error)}`);
+    throw error;
+  }
+}

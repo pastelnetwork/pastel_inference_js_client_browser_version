@@ -29,6 +29,8 @@
     <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha3/0.9.3/sha3.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/yup@1.4.0/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pouchdb@9.0.0/lib/index-browser.min.js"></script>
     <style>
       .ground-glass {
         background-color: rgba(255, 255, 255, 0.8);
@@ -915,6 +917,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
     </div>
 
     <script type="text/javascript" src="libpastel_wasm.js"></script>
+    <script type="text/javascript" src="sequelize_data_models_browser_client.js"></script>
     <script type="text/javascript" src="storage_browser_client.js"></script>
     <script type="text/javascript" src="utility_functions_browser_replacements.js"></script>
     <script src="logger_browser_cient.js"></script>
@@ -1189,11 +1192,10 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           selectedID || "No PastelID selected";
       }
 
+      // Done
       async function checkCreditPackTicketInfo(txid) {
         try {
-          const response = await getCreditPackTicketInfoEndToEnd(txid);
-          const { requestResponse, requestConfirmation, balanceInfo } =
-            response?.result;
+          const { requestResponse, requestConfirmation, balanceInfo } = await getCreditPackTicketInfoEndToEnd(txid);
           document.getElementById("requestResponse").textContent =
             JSON.stringify(requestResponse, null, 2);
           document.getElementById("requestConfirmation").textContent =
@@ -2980,19 +2982,21 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
+      // Done
       // Handle import private key form submission
       document
         .getElementById("importPrivKeyButton")
         .addEventListener("click", async () => {
           const privKey = document.getElementById("importPrivKey").value;
           try {
-            await axios.post(`${API_URL}/import-priv-key`, { zcashPrivKey: privKey });
+            await importPrivKey(privKey);
             alert("Private key imported successfully!");
           } catch (error) {
             console.error("Error importing private key:", error);
           }
         });
 
+      // Done
       // Handle import wallet form submission
       document
         .getElementById("importWalletButton")
@@ -3001,20 +3005,21 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           const formData = new FormData();
           formData.append("walletFile", walletFile);
           try {
-            await axios.post(`${API_URL}/import-wallet`, formData);
+            await importWallet(formData);
             alert("Wallet imported successfully!");
           } catch (error) {
             console.error("Error importing wallet:", error);
           }
         });
 
+      // Done
       // Handle list address amounts button click
       document
         .getElementById("listAddressAmountsButton")
         .addEventListener("click", async () => {
           try {
-            const response = await axios.get(`${API_URL}/list-address-amounts`);
-            const addressAmounts = response.data.result;
+            const response = await listAddressAmounts();
+            const addressAmounts = response.result;
             console.log("Address amounts:", addressAmounts);
 
             // Populate the table
@@ -3057,13 +3062,14 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             console.error("Error retrieving address amounts:", error);
           }
         });
+
+      // Done
       // Handle get wallet info button click
       document
         .getElementById("getWalletInfoButton")
         .addEventListener("click", async () => {
           try {
-            const response = await axios.get(`${API_URL}/get-wallet-info`);
-            const walletInfo = response.data.result;
+            const walletInfo = await getWalletInfo()();
             console.log("Wallet info:", walletInfo);
 
             // Populate the table
@@ -3112,6 +3118,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
+      // Done
       document
         .getElementById("clearLocalStorageButton")
         .addEventListener("click", () => {
@@ -3126,6 +3133,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
+      // Done
       // Create a terminal and load the fit addon
       const term = new Terminal({ cols: 175, rows: 24 });
       term.open(document.getElementById("terminal"));
@@ -3136,6 +3144,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         rows: 24,
       };
 
+      // Done
       function resizeTerminal() {
         const terminalElement = document.getElementById("terminal");
         const cols = Math.floor(terminalElement.clientWidth / 10); // Approximate character width
@@ -3153,11 +3162,13 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       resizeTerminal();
       window.addEventListener("resize", resizeTerminal);
 
+      // Done
       function displayStatusMessage(message) {
         const currentStatus = document.getElementById("currentStatus");
         currentStatus.textContent = message;
       }
 
+      // Done
       function cleanAndFormatMessage(message) {
         if (typeof message === "object") {
           // If the message is a JSON object, stringify and format it
@@ -3169,6 +3180,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return message;
       }
 
+      // Done
       function logMessageToTerminal(term, logMessage) {
         // Ensure logMessage.message is a string before cleaning and formatting
         const message =
@@ -3255,6 +3267,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           console.error("Error fetching WebSocket URL:", error);
         });
 
+      // Done
       function toggleTerminal() {
         const terminal = document.getElementById("terminal");
         if (terminal.style.display === "none") {
@@ -3279,6 +3292,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       if (storedTheme)
         document.documentElement.setAttribute("data-theme", storedTheme);
 
+      // Done
       function toggleDarkMode() {
         var currentTheme = document.documentElement.getAttribute("data-theme");
         var targetTheme = currentTheme === "light" ? "dark" : "light";
@@ -3289,6 +3303,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           .setAttribute("data-content", targetTheme === "dark" ? "🌙" : "☀");
       }
 
+      // Done
       // Set the initial state of the switch toggle
       const toggle = document.querySelector("#theme-toggle");
       if (storedTheme === "dark") {
@@ -3310,6 +3325,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
+      // Done
       document.addEventListener("DOMContentLoaded", () => {
         const createTicketForm = document.getElementById("createTicketForm");
         createTicketForm.addEventListener("submit", async (event) => {
