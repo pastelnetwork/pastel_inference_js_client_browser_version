@@ -933,7 +933,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       const STORAGE_TIMESTAMP_KEY = "creditPackTicketsTimestamp";
       const REFRESH_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
-      // Done
       function debounce(func, wait) {
         let timeout;
         return function (...args) {
@@ -943,18 +942,15 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         };
       }
 
-      // Done
       function formatNumberWithCommas(number) {
         return number.toLocaleString();
       }
 
-      // Done
       function parseAndFormatNumber(value) {
         const number = parseFloat(value.replace(/,/g, ""));
         return isNaN(number) ? value : formatNumberWithCommas(number);
       }
 
-      // Done
       function handleInputChange(event) {
         const inputElement = event.target;
         if (inputElement.type === "file") {
@@ -964,7 +960,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         inputElement.setAttribute("data-raw-value", rawValue);
       }
 
-      // Done
       function handleInputBlur(event) {
         const inputElement = event.target;
         if (inputElement.type === "file") {
@@ -974,14 +969,12 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         inputElement.value = formattedValue;
       }
 
-      // Done
       async function fetchImageSize(url) {
         const response = await fetch(url);
         const blob = await response.blob();
         return blob.size;
       }
 
-      // Done
       function parseAndFormat(value) {
         try {
           if (typeof value === "string") {
@@ -999,7 +992,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function prettyJSON(data) {
         if (data instanceof Map) {
           data = Object.fromEntries(data); // Convert Map to object
@@ -1025,12 +1017,10 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return data; // Return data as is for other types
       }
 
-      // Done
       function sanitizeJSON(jsonString) {
         return jsonString.replace(/[^\x20-\x7E]+/g, ""); // Remove non-printable ASCII characters
       }
 
-      // Done
       function fallbackParseResult(result) {
         // If the result starts with {"text": ", strip it and the ending }
         if (result.startsWith(' {"text": "')) {
@@ -1048,7 +1038,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return result;
       }
 
-      // Done
       function formatAndHighlightMessage(message) {
         const parts = message.split(/(\{[\s\S]*?\})/);
         return parts
@@ -1072,7 +1061,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           .join("");
       }
 
-      // Done
       function logCreateTicketStatusMessage(message, container) {
         if (message.includes("ECONNREFUSED")) return;
         container.innerHTML = ""; // Clear previous log messages
@@ -1083,7 +1071,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         container.scrollTop = container.scrollHeight; // Scroll to bottom
       }
 
-      // Done
       function logStatusMessage(message) {
         if (message.includes("ECONNREFUSED")) return;
         const currentStatus = document.getElementById("currentStatus");
@@ -1092,7 +1079,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         currentStatus.innerHTML = formatAndHighlightMessage(message);
       }
 
-      // Done
       function abbreviateJSON(jsonString, maxLength) {
         if (jsonString.length <= maxLength) return jsonString;
         const abbreviated = jsonString.slice(0, maxLength) + "...";
@@ -1105,7 +1091,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return abbreviated + "}".repeat(openBraces) + "]".repeat(openBrackets);
       }
 
-      // Done
       function logActionWithPayload(action, payloadName, jsonPayload) {
         const maxPayloadLength = 10000;
         let formattedPayload = prettyJSON(jsonPayload);
@@ -1117,7 +1102,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         );
       }
 
-      // Done
       async function setSelectedPastelIDAndPassphrase(selectedPastelID) {
         let storedPassphrase = localStorage.getItem(selectedPastelID);
 
@@ -1179,20 +1163,17 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function togglePastelIDDropdown() {
         const dropdown = document.getElementById("pastelIDDropdown");
         dropdown.classList.toggle("hidden");
       }
 
-      // Done
       function updatePastelIDSelection() {
         const selectedID = document.getElementById("pastelIDDropdown").value;
         document.getElementById("userPastelID").textContent =
           selectedID || "No PastelID selected";
       }
 
-      // Done
       async function checkCreditPackTicketInfo(txid) {
         try {
           const { requestResponse, requestConfirmation, balanceInfo } = await getCreditPackTicketInfoEndToEnd(txid);
@@ -1214,7 +1195,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function getAddressURL(address) {
         let baseURL = "https://explorer.pastel.network/address/";
         if (address.startsWith("44")) {
@@ -1225,7 +1205,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return `${baseURL}${address}`;
       }
 
-      // Done
       function getTxidURL(trackingAddress, txid) {
         let baseURL = "https://explorer.pastel.network/tx/";
         if (trackingAddress.startsWith("44")) {
@@ -1236,7 +1215,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return `${baseURL}${txid}`;
       }
 
-      // Done
       async function checkTrackingAddresses() {
         try {
           const response = await listAddressAmounts();
@@ -1283,8 +1261,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             ) {
               validCreditPackTickets = JSON.parse(savedData);
             } else {
-              const response = await axios.get(`${API_URL}/get-my-valid-credit-packs`);
-              validCreditPackTickets = response.data.result;
+              validCreditPackTickets = await getMyValidCreditPackTicketsEndToEnd() || [];
               localStorage.setItem(
                 STORAGE_KEY,
                 JSON.stringify(validCreditPackTickets)
@@ -1292,8 +1269,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
               localStorage.setItem(STORAGE_TIMESTAMP_KEY, now);
             }
           } else {
-            const response = await axios.get(`${API_URL}/get-my-valid-credit-packs`);
-            validCreditPackTickets = response.data.result;
+            validCreditPackTickets = await getMyValidCreditPackTicketsEndToEnd() || [];
             localStorage.setItem(
               STORAGE_KEY,
               JSON.stringify(validCreditPackTickets)
@@ -1302,8 +1278,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
 
           // Fetch wallet addresses
-          const walletResponse = await axios.get(`${API_URL}/list-address-amounts`);
-          const walletAddresses = Object.keys(walletResponse.data.result);
+          const walletResponse = await listAddressAmounts();
+          const walletAddresses = Object.keys(walletResponse.result);
 
           // Filter valid credit pack tickets based on tracking addresses
           validCreditPackTickets = validCreditPackTickets.filter((ticket) =>
@@ -1610,7 +1586,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       // Handle inference request stuff:
       let modelMenu = null;
 
-      // Done
       async function getInferenceModelMenu() {
         try {
           const pastelData = await getCurrentPastelIdAndPassphrase();
@@ -1640,7 +1615,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       async function fetchModelMenu() {
         try {
           const response = await getInferenceModelMenu();
@@ -1653,7 +1627,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function handleModelChange() {
         const selectedModelName = document.getElementById("model").value;
         const selectedModel = modelMenu.models.find(
@@ -1665,7 +1638,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function generateModelParameterFields(selectedModel) {
         const modelParametersContainer = document.getElementById(
           "modelParametersContainer"
@@ -1746,7 +1718,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         });
       }
 
-      // Done
       function populateModelDropdown() {
         const selectedInferenceType = inferenceTypeSelect.value;
         const modelSelect = document.getElementById("model");
@@ -1796,13 +1767,11 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function displayError(message) {
         // Implement user-friendly error handling/display mechanism
         alert(message); // Simplistic example, consider more sophisticated modal or notification systems
       }
 
-      // Done
       // Load inference request settings from localStorage
       function loadInferenceRequestSettings() {
         const selectedInferenceType = inferenceTypeSelect.value;
@@ -1819,7 +1788,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       // Save inference request settings to localStorage
       function saveInferenceRequestSettings() {
         const selectedInferenceType = inferenceTypeSelect.value;
@@ -1835,7 +1803,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         );
       }
 
-      // Done
       document.addEventListener("DOMContentLoaded", async () => {
         const noPastelIDContainer = document.getElementById(
           "noPastelIDContainer"
@@ -1950,7 +1917,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       });
 
-      // Done
       document.addEventListener("DOMContentLoaded", async () => {
         const pastelIDDropdown = document.getElementById("pastelIDDropdown");
         const passphraseContainer = document.getElementById(
@@ -2050,7 +2016,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       });
 
-      // Done
       async function refreshCreditPackTickets() {
         const refreshButton = document.getElementById("refreshButton");
         const loader = refreshButton.querySelector(".loader");
@@ -2079,7 +2044,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         "imageGenerationSettings"
       );
 
-      // Done
       inferenceTypeSelect.addEventListener("change", () => {
         const selectedInferenceType =
           document.getElementById("inferenceType").value;
@@ -2125,7 +2089,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         .getElementById("model")
         .addEventListener("change", handleModelChange);
 
-      // Done
       function handleCreditPackSelection() {
         const radioButtons = document.querySelectorAll(
           'input[name="creditPackTicket"]'
@@ -2145,7 +2108,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         });
       }
 
-      // Done
       document
         .getElementById("copyAddressButton")
         .addEventListener("click", () => {
@@ -2187,7 +2149,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
-      // Done
       document.addEventListener("DOMContentLoaded", () => {
         handleCreditPackSelection();
       });
@@ -2195,7 +2156,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       let displayInferenceRequestLoggerMessages = false;
       let displayCreateTicketLoggerMessages = false;
 
-      // Done
       async function saveInferenceRequestToLocalStorage(requestData) {
         let requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2256,7 +2216,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         updatePreviousRequestsList();
       }
 
-      // Done
       async function compressGeneratedImage(imgElement) {
         try {
           const options = {
@@ -2286,7 +2245,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       async function compressImage(imageBlob) {
         try {
           const compressedFile = await imageCompression(imageBlob, {
@@ -2309,7 +2267,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function updatePreviousRequestsList() {
         const requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2376,7 +2333,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       function deleteRequest(index) {
         let requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2385,7 +2341,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         updatePreviousRequestsList();
       }
 
-      // Done
       function exportRequests() {
         const requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2447,7 +2402,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
 
       updatePreviousRequestsList();
 
-      // Done
       function displayRequestPreview(index) {
         const requests =
           JSON.parse(localStorage.getItem("inferenceRequests")) || [];
@@ -2583,7 +2537,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         renderMarkdown();
       }
 
-      // Done
       function downloadZip(zipUrl) {
         const link = document.createElement("a");
         link.href = zipUrl;
@@ -2595,6 +2548,41 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
 
       // Call updatePreviousRequestsList on page load
       document.addEventListener("DOMContentLoaded", updatePreviousRequestsList);
+
+      async function createInferenceRequest(requestPayload) {
+        const {
+          model_inference_type_string: modelInferenceTypeString,
+          model_parameters_json_b64,
+          model_input_data_json_b64,
+          selectedCreditPackTicketId: creditPackTicketPastelTxid,
+          maxCost: maximumInferenceCostInCredits,
+          model_canonical_name: requestedModelCanonicalString,
+        } = requestPayload;
+
+        try {
+          const burnAddress = await configureRPCAndSetBurnAddress();
+          const modelParameters = JSON.parse(
+            Buffer.from(model_parameters_json_b64, "base64").toString()
+          );
+          const modelInputData = JSON.parse(
+            Buffer.from(model_input_data_json_b64, "base64").toString()
+          );
+          console.log(`Model Inference Type: ${modelInferenceTypeString}`);
+          const result = await handleInferenceRequestEndToEnd(
+            creditPackTicketPastelTxid,
+            modelInputData,
+            requestedModelCanonicalString,
+            modelInferenceTypeString,
+            modelParameters,
+            maximumInferenceCostInCredits,
+            burnAddress
+          );
+          return { success: true, result };
+        } catch (error) {
+          console.error("Error in create-inference-request:", error);
+          return { success: false, error: error.message };
+        }
+      }
 
       async function createNewInferenceRequest(
         selectedCreditPackTicketId,
@@ -2633,18 +2621,13 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             maxCost,
             model_canonical_name: selectedModelCanonicalName,
           };
+          // TODO
+          const response = await createInferenceRequest(requestPayload);
 
-          const response = await axios.post(
-            `${API_URL}/create-inference-request`,
-            requestPayload
-          );
-
-          if (response.data.success) {
+          if (response.success) {
             logStatusMessage("Inference request created successfully.");
-            const contentType = response.headers["content-type"];
-
             const inferenceResultDict =
-              response.data.result.inferenceResultDict;
+              response.result.inferenceResultDict;
 
             let combinedResults = "";
             const modelInputDataJSON =
@@ -2887,7 +2870,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       async function decompressJsonFromZip(zipUrl) {
         const response = await fetch(zipUrl);
         const blob = await response.blob();
@@ -2910,10 +2892,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             /(?:https?:\/\/)?([^:/]+)/i
           )[1];
 
-          const messagesResponse = await axios.get(`${API_URL}/get-received-messages`, {
-            timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-          });
-          const messageDict = messagesResponse.data.messageDict;
+          const messageDict = await checkForNewIncomingMessages();
 
           const receivedMessagesContainer =
             document.getElementById("receivedMessages");
@@ -2982,7 +2961,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
-      // Done
       // Handle import private key form submission
       document
         .getElementById("importPrivKeyButton")
@@ -2996,7 +2974,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
-      // Done
       // Handle import wallet form submission
       document
         .getElementById("importWalletButton")
@@ -3063,7 +3040,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
-      // Done
       // Handle get wallet info button click
       document
         .getElementById("getWalletInfoButton")
@@ -3118,7 +3094,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
-      // Done
       document
         .getElementById("clearLocalStorageButton")
         .addEventListener("click", () => {
@@ -3133,7 +3108,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
         });
 
-      // Done
       // Create a terminal and load the fit addon
       const term = new Terminal({ cols: 175, rows: 24 });
       term.open(document.getElementById("terminal"));
@@ -3144,7 +3118,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         rows: 24,
       };
 
-      // Done
       function resizeTerminal() {
         const terminalElement = document.getElementById("terminal");
         const cols = Math.floor(terminalElement.clientWidth / 10); // Approximate character width
@@ -3162,13 +3135,11 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       resizeTerminal();
       window.addEventListener("resize", resizeTerminal);
 
-      // Done
       function displayStatusMessage(message) {
         const currentStatus = document.getElementById("currentStatus");
         currentStatus.textContent = message;
       }
 
-      // Done
       function cleanAndFormatMessage(message) {
         if (typeof message === "object") {
           // If the message is a JSON object, stringify and format it
@@ -3180,7 +3151,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return message;
       }
 
-      // Done
       function logMessageToTerminal(term, logMessage) {
         const message =
           typeof logMessage.message === "string" ? logMessage.message : "";
@@ -3240,6 +3210,7 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         messageLines.forEach((line) => term.writeln(line));
       }
 
+      // Need to replace with a call API
       fetch(`${API_URL}/ws-url`)
         .then((response) => response.json())
         .then((data) => {
@@ -3286,7 +3257,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           console.error("Error fetching WebSocket URL:", error);
         });
 
-      // Done
       function toggleTerminal() {
         const terminal = document.getElementById("terminal");
         if (terminal.style.display === "none") {
@@ -3311,7 +3281,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       if (storedTheme)
         document.documentElement.setAttribute("data-theme", storedTheme);
 
-      // Done
       function toggleDarkMode() {
         var currentTheme = document.documentElement.getAttribute("data-theme");
         var targetTheme = currentTheme === "light" ? "dark" : "light";
@@ -3322,7 +3291,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           .setAttribute("data-content", targetTheme === "dark" ? "🌙" : "☀");
       }
 
-      // Done
       // Set the initial state of the switch toggle
       const toggle = document.querySelector("#theme-toggle");
       if (storedTheme === "dark") {
@@ -3333,7 +3301,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         toggle.setAttribute("data-content", "☀");
       }
 
-      // Done
       // Format the values and display them using template literals
       function formatAndDisplay(inputElement) {
         const value = inputElement.value.replace(/,/g, "");
@@ -3344,7 +3311,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
       }
 
-      // Done
       document.addEventListener("DOMContentLoaded", () => {
         const createTicketForm = document.getElementById("createTicketForm");
         createTicketForm.addEventListener("submit", async (event) => {
@@ -3563,7 +3529,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         );
       });
 
-      // Done
       document
         .getElementById("exportTerminalButton")
         .addEventListener("click", () => {
@@ -3585,7 +3550,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           document.body.removeChild(link);
         });
 
-      // Done
       document.addEventListener("DOMContentLoaded", () => {
         hljs.highlightAll();
         handleCreditPackSelection();

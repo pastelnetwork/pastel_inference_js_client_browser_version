@@ -5,8 +5,8 @@ Module.onRuntimeInitialized = function () {
   pastelInstance = new Module.Pastel();
 };
 
+// Need to replace with a call API
 async function getLocalRPCSettings() {
-  // TODO:
   let rpchost = "127.0.0.1";
   let rpcport = "19932";
   let rpcuser = "";
@@ -416,6 +416,29 @@ async function getWalletInfo() {
     return result;
   } catch (error) {
     logger.error(`Error getting wallet info: ${safeStringify(error)}`);
+    throw error;
+  }
+}
+
+async function checkPSLAddressBalanceAlternative(addressToCheck) {
+  try {
+    const addressAmountsDict = await pastelInstance.listaddressamounts();
+    // Convert the object into an array of objects, each representing a row
+    const data = Object.entries(addressAmountsDict).map(
+      ([address, amount]) => ({ address, amount })
+    );
+    // Filter the array for the specified address
+    const filteredData = data.filter((item) => item.address === addressToCheck);
+    // Calculate the sum of the 'amount' column for the filtered array
+    const balanceAtAddress = filteredData.reduce(
+      (acc, item) => acc + item.amount,
+      0
+    );
+    return balanceAtAddress;
+  } catch (error) {
+    logger.error(
+      `Error in checkPSLAddressBalanceAlternative: ${safeStringify(error)}`
+    );
     throw error;
   }
 }
