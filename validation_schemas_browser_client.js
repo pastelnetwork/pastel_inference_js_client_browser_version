@@ -125,12 +125,16 @@ const creditPackPurchaseRequestResponseSchema = yup.object({
   credit_usage_tracking_psl_address: yup.string().required(),
   request_response_timestamp_utc_iso_string: yup.string().required(),
   request_response_pastel_block_height: yup.number().integer().required(),
+  best_block_merkle_root: yup.string().required(),
+  best_block_height: yup.number().integer().required(),
   credit_purchase_request_response_message_version_string: yup.string().required(),
   responding_supernode_pastelid: yup.string().required(),
   list_of_blacklisted_supernode_pastelids: yup.string().required(),
   list_of_potentially_agreeing_supernodes: yup.string().required(),
   list_of_supernode_pastelids_agreeing_to_credit_pack_purchase_terms: yup.string().required(),
-  agreeing_supernodes_signatures_dict: yup.string().required(),
+  list_of_supernode_pastelids_agreeing_to_credit_pack_purchase_terms_selected_for_signature_inclusion:
+  yup.string().required(),
+  selected_agreeing_supernodes_signatures_dict: yup.string().required(),
   sha3_256_hash_of_credit_pack_purchase_request_response_fields: yup.string().required(),
   responding_supernode_signature_on_credit_pack_purchase_request_response_hash: yup.string().required(),
 });
