@@ -1,3 +1,13 @@
+function getIsoStringWithMicroseconds() {
+  // Get the current time
+  const now = new Date();
+  // Convert the date to an ISO string and replace 'Z' with '+00:00' to match Python's format
+  // Ensure to remove any unwanted spaces directly in this step if they were somehow introduced
+  const isoString = now.toISOString().replace("Z", "+00:00").replace(/\s/g, "");
+  // Return the correctly formatted ISO string without any spaces
+  return isoString;
+}
+
 class PastelInferenceClient {
   constructor(pastelID, passphrase) {
     this.pastelID = pastelID;

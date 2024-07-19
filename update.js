@@ -15,6 +15,7 @@ const repoUrl =
   "https://github.com/pastelnetwork/pastel_inference_js_client.git";
 const branch = "master"; // Changed from "main" to "master"
 
+// Can't convert to client browser
 function updateApplication() {
   if (useDebugMode) {
     console.log("Debug mode is enabled. Skipping auto-update.");
@@ -129,7 +130,7 @@ function updateApplication() {
     }
   );
 }
-
+// Can't convert to client browser
 function startApplication() {
   console.log("Starting application...");
   const server = spawn("node", ["server.js"], {

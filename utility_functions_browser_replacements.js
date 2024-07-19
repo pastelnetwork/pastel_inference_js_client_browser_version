@@ -57,12 +57,6 @@ function createHash(input) {
   return hash.toString(CryptoJS.enc.Hex);
 }
 
-const {
-  verifyMessageWithPastelID,
-  getBestBlockHashAndMerkleRoot,
-  checkSupernodeList,
-} = require("./rpc_functions");
-
 const TARGET_VALUE_PER_CREDIT_IN_USD = parseFloat(
   env.TARGET_VALUE_PER_CREDIT_IN_USD
 );
