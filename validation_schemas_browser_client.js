@@ -272,25 +272,3 @@ const inferenceConfirmationSchema = yup.object({
   requesting_pastelid: yup.string().required(),
   confirmation_transaction: yup.object().required(),
 });
-
-module.exports = {
-  supernodeListSchema,
-  messageSchema,
-  userMessageSchema,
-  creditPackPurchaseRequestSchema,
-  creditPackPurchaseRequestRejectionSchema,
-  creditPackPurchaseRequestPreliminaryPriceQuoteSchema,
-  creditPackPurchaseRequestPreliminaryPriceQuoteResponseSchema,
-  creditPackPurchaseRequestResponseTerminationSchema,
-  creditPackPurchaseRequestResponseSchema,
-  creditPackPurchaseRequestConfirmationSchema,
-  creditPackPurchaseRequestConfirmationResponseSchema,
-  creditPackRequestStatusCheckSchema,
-  creditPackPurchaseRequestStatusSchema,
-  creditPackStorageRetryRequestSchema,
-  creditPackStorageRetryRequestResponseSchema,
-  inferenceAPIUsageRequestSchema,
-  inferenceAPIUsageResponseSchema,
-  inferenceAPIOutputResultSchema,
-  inferenceConfirmationSchema,
-};

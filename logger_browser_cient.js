@@ -49,5 +49,3 @@ function safeStringify(obj, space = 2) {
 }
 
 const logger = console;
-
-module.exports = { logger, safeStringify };

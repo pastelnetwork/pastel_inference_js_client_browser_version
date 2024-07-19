@@ -1,73 +1,12 @@
-const express = require("express");
-const multer = require("multer");
-const bodyParser = require("body-parser");
-const WebSocket = require("ws");
-const os = require("os");
-const path = require("path");
-const fs = require("fs");
-const {
-  getCurrentPastelIdAndPassphrase,
-  setPastelIdAndPassphrase,
-} = require("./storage");
-const { PastelInferenceClient } = require("./pastel_inference_client");
 
-const {
-  checkForNewIncomingMessages,
-  sendMessageAndCheckForNewIncomingMessages,
-  handleCreditPackTicketEndToEnd,
-  getCreditPackTicketInfoEndToEnd,
-  getMyValidCreditPackTicketsEndToEnd,
-  handleInferenceRequestEndToEnd,
-  estimateCreditPackCostEndToEnd,
-} = require("./end_to_end_functions");
-const {
-  getLocalRPCSettings,
-  getNetworkInfo,
-  initializeRPCConnection,
-  createAndFundNewPSLCreditTrackingAddress,
-  checkSupernodeList,
-  registerPastelID,
-  listPastelIDTickets,
-  findPastelIDTicket,
-  getPastelTicket,
-  listContractTickets,
-  findContractTicket,
-  getContractTicket,
-  importPrivKey,
-  importWallet,
-  listAddressAmounts,
-  getBalance,
-  getWalletInfo,
-  getNewAddress,
-  checkForRegisteredPastelID,
-  createAndRegisterNewPastelID,
-  stopPastelDaemon,
-  startPastelDaemon,
-  getMyPslAddressWithLargestBalance
-} = require("./rpc_functions");
-const { logger, logEmitter, logBuffer, safeStringify } = require("./logger");
-const {
-  prettyJSON,
-  getClosestSupernodeToPastelIDURL,
-  getNClosestSupernodesToPastelIDURLs,
-} = require("./utility_functions");
-
-let MY_LOCAL_PASTELID = "";
-let MY_PASTELID_PASSPHRASE = "";
-
-// Can't convert to client browser
-const app = express();
-app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
-app.use(bodyParser.json({ limit: "50mb" }));
-const upload = multer({ dest: "uploads/" });
-
+// Need to replace with a call API
 const port = process.env.CLIENT_PORT || 3100;
 const webSocketPort = process.env.CLIENT_WEBSOCKET_PORT || 3101;
 
 // Can't convert to client browser
-const wss = new WebSocket.Server({ port: webSocketPort }, () => {
-  console.log(`WebSocket server started on port ${webSocketPort}`);
-});
+// const wss = new WebSocket.Server({ port: webSocketPort }, () => {
+//   console.log(`WebSocket server started on port ${webSocketPort}`);
+// });
 
 // Can't convert to client browser
 function getServerIpAddress() {
@@ -91,48 +30,42 @@ const getWsUrl = () => {
 }
 
 // Can't convert to client browser
-wss.on("connection", (ws) => {
-  logger.info(`Client connected: ${ws}`);
+// wss.on("connection", (ws) => {
+//   logger.info(`Client connected: ${ws}`);
 
-  logBuffer.forEach((logEntry) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(logEntry);
-    }
-  });
+//   logBuffer.forEach((logEntry) => {
+//     if (ws.readyState === WebSocket.OPEN) {
+//       ws.send(logEntry);
+//     }
+//   });
 
-  const logListener = (logEntry) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(logEntry);
-    }
-  };
-  logEmitter.on("newLog", logListener);
+//   const logListener = (logEntry) => {
+//     if (ws.readyState === WebSocket.OPEN) {
+//       ws.send(logEntry);
+//     }
+//   };
+//   logEmitter.on("newLog", logListener);
 
-  ws.on("message", (message) => {
-    logger.info(`Received message from client: ${message}`);
-  });
+//   ws.on("message", (message) => {
+//     logger.info(`Received message from client: ${message}`);
+//   });
 
-  ws.on("close", (code, reason) => {
-    logger.info(`Client disconnected; code: ${code}, reason: ${reason}`);
-    logEmitter.removeListener("newLog", logListener);
-  });
+//   ws.on("close", (code, reason) => {
+//     logger.info(`Client disconnected; code: ${code}, reason: ${reason}`);
+//     logEmitter.removeListener("newLog", logListener);
+//   });
 
-  ws.on("error", (error) => {
-    logger.error(`WebSocket error: ${error.message}`);
-    logEmitter.removeListener("newLog", logListener);
-  });
-});
+//   ws.on("error", (error) => {
+//     logger.error(`WebSocket error: ${error.message}`);
+//     logEmitter.removeListener("newLog", logListener);
+//   });
+// });
 
-let rpcport;
-let network;
 
-(async () => {
-  try {
-    await initializeRPCConnection();
-    const rpcSettings = await getLocalRPCSettings();
-    rpcport = rpcSettings.rpcport;
-    network = getNetworkInfo(rpcport).network;
-
+// (async () => {
+//   try {
     async function configureRPCAndSetBurnAddress() {
+      const rpcport = '';
       try {
         let burnAddress;
         if (rpcport === "9932") {
@@ -150,16 +83,6 @@ let network;
         throw error;
       }
     }
-
-    // Can't convert to client browser
-    app.get("/", (req, res) => {
-      res.sendFile(path.join(__dirname, "index.html"));
-    });
-
-    // Can't convert to client browser
-    app.get("/favicon.ico", (req, res) => {
-      res.sendFile(path.join(__dirname, "favicon.ico"));
-    });
 
     const getNetworkInfo = async () => {
       try {
@@ -532,15 +455,11 @@ let network;
       }
     }
 
-    // Can't convert to client browser
-    app.listen(port, () => {
-      console.log(`Server running at http://localhost:${port}`);
-    });
-  } catch (error) {
-    console.error("Error initializing server:", error);
-    process.exit(1);
-  }
-})();
+//   } catch (error) {
+//     console.error("Error initializing server:", error);
+//     process.exit(1);
+//   }
+// })();
 
 // Can't convert to client browser
 function getNetworkSpecificDestFolder(network) {

@@ -1042,37 +1042,3 @@ async function filterSupernodesByPingResponseTimeAndPortResponse(
   });
   return filteredSupernodes;
 }
-
-module.exports = {
-  fetchCurrentPSLMarketPrice,
-  estimatedMarketPriceOfInferenceCreditsInPSLTerms,
-  prettyJSON,
-  logActionWithPayload,
-  transformCreditPackPurchaseRequestResponse,
-  computeSHA3256Hexdigest,
-  getSHA256HashOfInputData,
-  compressDataWithZstd,
-  decompressDataWithZstd,
-  calculateXORDistance,
-  pythonCompatibleStringify,
-  extractResponseFieldsFromCreditPackTicketMessageDataAsJSON,
-  computeSHA3256HashOfSQLModelResponseFields,
-  prepareModelForValidation,
-  prepareModelForEndpoint,
-  removeSequelizeFields,
-  validateTimestampFields,
-  validatePastelBlockHeightFields,
-  validateHashFields,
-  validatePastelIDSignatureFields,
-  getClosestSupernodePastelIDFromList,
-  checkIfPastelIDIsValid,
-  getSupernodeUrlFromPastelID,
-  getClosestSupernodeToPastelIDURL,
-  getNClosestSupernodesToPastelIDURLs,
-  validateCreditPackTicketMessageData,
-  validateInferenceResponseFields,
-  validateInferenceResultFields,
-  validateInferenceData,
-  filterSupernodesByPingResponseTimeAndPortResponse,
-  logger,
-};

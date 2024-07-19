@@ -1552,7 +1552,3 @@ class PastelInferenceClient {
     }
   }
 }
-
-module.exports = {
-  PastelInferenceClient,
-};
