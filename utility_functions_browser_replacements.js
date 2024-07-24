@@ -1,23 +1,7 @@
-(function (d) {
-  var cdnUrls = [
-    'https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/pako/2.0.4/pako.min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/axios/0.24.0/axios.min.js',
-  ];
-
-  cdnUrls.forEach(function(url) {
-    var script = d.createElement('script');
-    script.src = url;
-    d.head.appendChild(script);
-  });
-})(document);
-
-const env = {
-  TARGET_VALUE_PER_CREDIT_IN_USD: 0.01,
-  TARGET_PROFIT_MARGIN: 0.15,
-  MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING: 0.25,
-  MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS: 1,
-}
+const TARGET_VALUE_PER_CREDIT_IN_USD = 0.01;
+const TARGET_PROFIT_MARGIN = 0.15;
+const MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING = 0.25;
+const MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS = 1;
 
 class SupernodeCache {
   getItem(key) {
@@ -33,41 +17,6 @@ class SupernodeCache {
 }
 
 const supernodeCacheStorage = new SupernodeCache();
-
-async function pingIPAddress(ipAddress, maxResponseTimeInMilliseconds = 800) {
-  try {
-    const { data } = await axios.post('/ping-ip', {
-      ipAddress,
-      timeout: maxResponseTimeInMilliseconds,
-    });
-    return data // return { time: 12 }
-  } catch (error) {
-    return {
-      time: -1
-    };
-  }
-}
-
-function isSequelizeModel(data) {
-  return !!data?.sequelize?.queryInterface && !!data?.sequelize?.models && !!data?.sequelize?.modelManager && !!data?.sequelize?.connectionManager?.sequelize && typeof data.get === "function"
-}
-
-function createHash(input) {
-  const hash = CryptoJS.SHA3(input, { outputLength: 256 });
-  return hash.toString(CryptoJS.enc.Hex);
-}
-
-const TARGET_VALUE_PER_CREDIT_IN_USD = parseFloat(
-  env.TARGET_VALUE_PER_CREDIT_IN_USD
-);
-const TARGET_PROFIT_MARGIN = parseFloat(env.TARGET_PROFIT_MARGIN);
-const MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING =
-  parseFloat(
-    env.MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING
-  );
-const MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS = parseInt(
-  env.MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS
-);
 
 async function fetchCurrentPSLMarketPrice() {
   async function checkPrices() {
@@ -148,9 +97,6 @@ function parseAndFormat(value) {
 }
 
 function prettyJSON(data) {
-  if (isSequelizeModel(data)) {
-    data = data.get({ plain: true });
-  }
   if (data instanceof Map) {
     data = Object.fromEntries(data);
   }
@@ -210,6 +156,11 @@ function transformCreditPackPurchaseRequestResponse(result) {
     }
   });
   return transformedResult;
+}
+
+function createHash(input) {
+  const hash = CryptoJS.SHA3(input, { outputLength: 256 });
+  return hash.toString(CryptoJS.enc.Hex);
 }
 
 function computeSHA3256Hexdigest(input) {
@@ -317,10 +268,7 @@ async function extractResponseFieldsFromCreditPackTicketMessageDataAsJSON(
   modelInstance
 ) {
   const responseFields = {};
-  const plainObject =
-  isSequelizeModel(modelInstance)
-      ? modelInstance.get({ plain: true })
-      : modelInstance;
+  const plainObject = modelInstance;
 
   let lastHashFieldName = null;
   let lastSignatureFieldNames = [];
@@ -375,10 +323,7 @@ async function computeSHA3256HashOfSQLModelResponseFields(modelInstance) {
 
 async function prepareModelForEndpoint(modelInstance) {
   let preparedModelInstance = {};
-  let instanceData =
-  isSequelizeModel(modelInstance)
-      ? modelInstance.get({ plain: true })
-      : modelInstance;
+  let instanceData = modelInstance;
   for (const key in instanceData) {
     if (Object.prototype.hasOwnProperty.call(instanceData, key)) {
       if (key.endsWith("_json")) {
@@ -422,9 +367,7 @@ function removeSequelizeFields(plainObject) {
 
 async function prepareModelForValidation(modelInstance) {
   let preparedModelInstance;
-  if (isSequelizeModel(modelInstance)) {
-    preparedModelInstance = modelInstance.get({ plain: true });
-  } else if (typeof modelInstance === "object") {
+  if (typeof modelInstance === "object") {
     preparedModelInstance = { ...modelInstance };
   } else {
     throw new Error("Invalid modelInstance type");
@@ -990,6 +933,25 @@ function validateInferenceData(inferenceResultDict, auditResults) {
   };
 
   return validationResults;
+}
+
+// Need to replace with a call API
+// Input:
+//  ipAddress
+//  maxResponseTimeInMilliseconds
+// Output: { time: 12 }
+async function pingIPAddress(ipAddress, maxResponseTimeInMilliseconds = 800) {
+  try {
+    const { data } = await axios.post('/ping-ip', {
+      ipAddress,
+      timeout: maxResponseTimeInMilliseconds,
+    });
+    return data // return { time: 12 }
+  } catch (error) {
+    return {
+      time: -1
+    };
+  }
 }
 
 async function filterSupernodesByPingResponseTimeAndPortResponse(

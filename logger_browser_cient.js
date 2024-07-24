@@ -48,4 +48,47 @@ function safeStringify(obj, space = 2) {
   return JSON.stringify(obj, replacer, space);
 }
 
-const logger = console;
+const sendLoggerMessages = (message, level = 'info') => {
+  const logMessage = {
+    message,
+    timestamp: new Date().toISOString(),
+    level,
+  }
+  logMessageToTerminal(term, logMessage);
+
+  if (displayInferenceRequestLoggerMessages) {
+    logStatusMessage(logMessage.message);
+  }
+
+  if (displayCreateTicketLoggerMessages) {
+    const statusContent =
+      document.getElementById("createTicketStatus");
+    if (logMessage.message) {
+      logCreateTicketStatusMessage(
+        logMessage.message,
+        statusContent
+      );
+    }
+  }
+}
+
+class InferenceLogger {
+  error(str) {
+    console.error(str);
+    sendLoggerMessages(str, 'error');
+  }
+  info(str) {
+    console.log(str);
+    sendLoggerMessages(str);
+  }
+  warn(str) {
+    console.warn(str);
+    sendLoggerMessages(str, 'warn');
+  }
+  debug(str) {
+    console.debug(str);
+    sendLoggerMessages(str, 'debug');
+  }
+}
+
+const logger = new InferenceLogger();

@@ -1,60 +1,124 @@
 const { v4: uuidv4 } = UUID;
 
-async function getCreditPackTicketInfoEndToEnd(creditPackTicketPastelTxid) {
+async function checkForNewIncomingMessages() {
   try {
     const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
     const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
+
+    if (!pastelID || !passphrase) {
+      logger.error("PastelID or passphrase is not set");
+      return [];
+    }
     const { validMasternodeListFullDF } = await checkSupernodeList();
-    const { url: supernodeURL } = await getClosestSupernodeToPastelIDURL(
-      pastelID,
+
+    logger.info("Retrieving incoming user messages...");
+    logger.info(`My local pastelid: ${inferenceClient.pastelID}`);
+
+    const closestSupernodesToLocal = await getNClosestSupernodesToPastelIDURLs(
+      3,
+      inferenceClient.pastelID,
       validMasternodeListFullDF
     );
-    if (!supernodeURL) {
-      throw new Error("Supernode URL is undefined");
-    }
     logger.info(
-      `Getting credit pack ticket data from Supernode URL: ${supernodeURL}...`
+      `Closest Supernodes to local pastelid: ${closestSupernodesToLocal
+        .map((sn) => `PastelID: ${sn.pastelID}, URL: ${sn.url}`)
+        .join(", ")}`
     );
 
-    const {
-      creditPackPurchaseRequestResponse,
-      creditPackPurchaseRequestConfirmation,
-    } = await inferenceClient.getCreditPackTicketFromTxid(
-      supernodeURL,
-      creditPackTicketPastelTxid
+    const messageRetrievalTasks = closestSupernodesToLocal.map(({ url }) =>
+      inferenceClient.getUserMessages(url).catch((error) => {
+        logger.warn(
+          `Failed to retrieve messages from supernode ${url}: ${error.message}`
+        );
+        return []; // Return an empty array on error
+      })
+    );
+    const messageLists = await Promise.all(messageRetrievalTasks);
+
+    const uniqueMessages = [];
+    const messageIDs = new Set();
+    for (const messageList of messageLists) {
+      for (const message of messageList) {
+        if (!messageIDs.has(message.id)) {
+          uniqueMessages.push(message);
+          messageIDs.add(message.id);
+        }
+      }
+    }
+
+    logger.info(
+      `Retrieved unique user messages: ${safeStringify(uniqueMessages)}`
     );
 
-    const balanceInfo = await inferenceClient.checkCreditPackBalance(
-      supernodeURL,
-      creditPackTicketPastelTxid
-    );
-
-    return {
-      requestResponse: creditPackPurchaseRequestResponse,
-      requestConfirmation: creditPackPurchaseRequestConfirmation,
-      balanceInfo,
-    };
+    return uniqueMessages;
   } catch (error) {
-    logger.error(`Error in getCreditPackTicketInfoEndToEnd: ${error.message}`);
+    logger.error(`Error in checkForNewIncomingMessages: ${error.message}`);
     throw error;
   }
 }
 
-async function estimateCreditPackCostEndToEnd(
-  desiredNumberOfCredits,
-  creditPriceCushionPercentage
+async function sendMessageAndCheckForNewIncomingMessages(
+  toPastelID,
+  messageBody
 ) {
   try {
     const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
     const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
-    const estimatedTotalCostOfTicket =
-      await inferenceClient.internalEstimateOfCreditPackTicketCostInPSL(
-        desiredNumberOfCredits,
-        creditPriceCushionPercentage
+    const { validMasternodeListFullDF } = await checkSupernodeList();
+
+    if (!pastelID || !passphrase) {
+      throw new Error("PastelID or passphrase is not set");
+    }
+
+    logger.info("Sending user message...");
+    logger.info(`Recipient pastelid: ${toPastelID}`);
+
+    const closestSupernodesToRecipient =
+      await getNClosestSupernodesToPastelIDURLs(
+        3,
+        toPastelID,
+        validMasternodeListFullDF
       );
-    return { success: true, result: estimatedTotalCostOfTicket } ;
+    logger.info(
+      `Closest Supernodes to recipient pastelid: ${closestSupernodesToRecipient.map(
+        (sn) => sn.pastelID
+      )}`
+    );
+
+    const userMessage = UserMessage.build({
+      from_pastelid: pastelID,
+      to_pastelid: toPastelID,
+      message_body: safeStringify(messageBody),
+      message_signature: await signMessageWithPastelID(
+        pastelID,
+        messageBody,
+        passphrase
+      ),
+    });
+
+    const { error } = userMessageSchema.validate(userMessage.toJSON());
+    if (error) {
+      throw new Error(`Invalid user message: ${error.message}`);
+    }
+
+    const sendTasks = closestSupernodesToRecipient.map(({ url }) =>
+      inferenceClient.sendUserMessage(url, userMessage)
+    );
+    const sendResults = await Promise.all(sendTasks);
+    logger.info(`Sent user messages: ${safeStringify(sendResults)}`);
+
+    const receivedMessages = await checkForNewIncomingMessages();
+
+    const messageDict = {
+      sent_messages: sendResults,
+      received_messages: receivedMessages,
+    };
+
+    return messageDict;
   } catch (error) {
-    logger.error(`Error in estimateCreditPackCostEndToEnd: ${error.message}`);
+    logger.error(
+      `Error in sendMessageAndCheckForNewIncomingMessages: ${error.message}`
+    );
     throw error;
   }
 }
@@ -374,59 +438,90 @@ async function handleCreditPackTicketEndToEnd(
   }
 }
 
-async function checkForNewIncomingMessages() {
+async function getCreditPackTicketInfoEndToEnd(creditPackTicketPastelTxid) {
   try {
     const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
     const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
-
-    if (!pastelID || !passphrase) {
-      logger.error("PastelID or passphrase is not set");
-      return [];
-    }
     const { validMasternodeListFullDF } = await checkSupernodeList();
-
-    logger.info("Retrieving incoming user messages...");
-    logger.info(`My local pastelid: ${inferenceClient.pastelID}`);
-
-    const closestSupernodesToLocal = await getNClosestSupernodesToPastelIDURLs(
-      3,
-      inferenceClient.pastelID,
+    const { url: supernodeURL } = await getClosestSupernodeToPastelIDURL(
+      pastelID,
       validMasternodeListFullDF
     );
-    logger.info(
-      `Closest Supernodes to local pastelid: ${closestSupernodesToLocal
-        .map((sn) => `PastelID: ${sn.pastelID}, URL: ${sn.url}`)
-        .join(", ")}`
-    );
-
-    const messageRetrievalTasks = closestSupernodesToLocal.map(({ url }) =>
-      inferenceClient.getUserMessages(url).catch((error) => {
-        logger.warn(
-          `Failed to retrieve messages from supernode ${url}: ${error.message}`
-        );
-        return []; // Return an empty array on error
-      })
-    );
-    const messageLists = await Promise.all(messageRetrievalTasks);
-
-    const uniqueMessages = [];
-    const messageIDs = new Set();
-    for (const messageList of messageLists) {
-      for (const message of messageList) {
-        if (!messageIDs.has(message.id)) {
-          uniqueMessages.push(message);
-          messageIDs.add(message.id);
-        }
-      }
+    if (!supernodeURL) {
+      throw new Error("Supernode URL is undefined");
     }
-
     logger.info(
-      `Retrieved unique user messages: ${safeStringify(uniqueMessages)}`
+      `Getting credit pack ticket data from Supernode URL: ${supernodeURL}...`
     );
 
-    return uniqueMessages;
+    const {
+      creditPackPurchaseRequestResponse,
+      creditPackPurchaseRequestConfirmation,
+    } = await inferenceClient.getCreditPackTicketFromTxid(
+      supernodeURL,
+      creditPackTicketPastelTxid
+    );
+
+    const balanceInfo = await inferenceClient.checkCreditPackBalance(
+      supernodeURL,
+      creditPackTicketPastelTxid
+    );
+
+    return {
+      requestResponse: creditPackPurchaseRequestResponse,
+      requestConfirmation: creditPackPurchaseRequestConfirmation,
+      balanceInfo,
+    };
   } catch (error) {
-    logger.error(`Error in checkForNewIncomingMessages: ${error.message}`);
+    logger.error(`Error in getCreditPackTicketInfoEndToEnd: ${error.message}`);
+    throw error;
+  }
+}
+
+async function getMyValidCreditPackTicketsEndToEnd() {
+  try {
+    const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
+    const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
+    const { validMasternodeListFullDF } = await checkSupernodeList();
+    const { url: supernodeURL } = await getClosestSupernodeToPastelIDURL(
+      pastelID,
+      validMasternodeListFullDF
+    );
+    if (!supernodeURL) {
+      throw new Error("Supernode URL is undefined");
+    }
+    logger.info(
+      `Getting credit pack ticket data from Supernode URL: ${supernodeURL}...`
+    );
+    const validCreditPackTickets =
+      await inferenceClient.getValidCreditPackTicketsForPastelID(
+        supernodeURL,
+        pastelID
+      );
+    return validCreditPackTickets || [];
+  } catch (error) {
+    logger.error(
+      `Error in getMyValidCreditPackTicketsEndToEnd: ${error.message}`
+    );
+    return [];
+  }
+}
+
+async function estimateCreditPackCostEndToEnd(
+  desiredNumberOfCredits,
+  creditPriceCushionPercentage
+) {
+  try {
+    const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
+    const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
+    const estimatedTotalCostOfTicket =
+      await inferenceClient.internalEstimateOfCreditPackTicketCostInPSL(
+        desiredNumberOfCredits,
+        creditPriceCushionPercentage
+      );
+    return { success: true, result: estimatedTotalCostOfTicket } ;
+  } catch (error) {
+    logger.error(`Error in estimateCreditPackCostEndToEnd: ${error.message}`);
     throw error;
   }
 }
@@ -712,101 +807,6 @@ async function handleInferenceRequestEndToEnd(
     }
   } catch (error) {
     logger.error(`Error in handleInferenceRequestEndToEnd: ${error.message}`);
-    throw error;
-  }
-}
-
-async function getMyValidCreditPackTicketsEndToEnd() {
-  try {
-    const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
-    const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
-    const { validMasternodeListFullDF } = await checkSupernodeList();
-    const { url: supernodeURL } = await getClosestSupernodeToPastelIDURL(
-      pastelID,
-      validMasternodeListFullDF
-    );
-    if (!supernodeURL) {
-      throw new Error("Supernode URL is undefined");
-    }
-    logger.info(
-      `Getting credit pack ticket data from Supernode URL: ${supernodeURL}...`
-    );
-    const validCreditPackTickets =
-      await inferenceClient.getValidCreditPackTicketsForPastelID(
-        supernodeURL,
-        pastelID
-      );
-    return validCreditPackTickets || [];
-  } catch (error) {
-    logger.error(
-      `Error in getMyValidCreditPackTicketsEndToEnd: ${error.message}`
-    );
-    return [];
-  }
-}
-
-async function sendMessageAndCheckForNewIncomingMessages(
-  toPastelID,
-  messageBody
-) {
-  try {
-    const { pastelID, passphrase } = await getCurrentPastelIdAndPassphrase();
-    const inferenceClient = new PastelInferenceClient(pastelID, passphrase);
-    const { validMasternodeListFullDF } = await checkSupernodeList();
-
-    if (!pastelID || !passphrase) {
-      throw new Error("PastelID or passphrase is not set");
-    }
-
-    logger.info("Sending user message...");
-    logger.info(`Recipient pastelid: ${toPastelID}`);
-
-    const closestSupernodesToRecipient =
-      await getNClosestSupernodesToPastelIDURLs(
-        3,
-        toPastelID,
-        validMasternodeListFullDF
-      );
-    logger.info(
-      `Closest Supernodes to recipient pastelid: ${closestSupernodesToRecipient.map(
-        (sn) => sn.pastelID
-      )}`
-    );
-
-    const userMessage = UserMessage.build({
-      from_pastelid: pastelID,
-      to_pastelid: toPastelID,
-      message_body: safeStringify(messageBody),
-      message_signature: await signMessageWithPastelID(
-        pastelID,
-        messageBody,
-        passphrase
-      ),
-    });
-
-    const { error } = userMessageSchema.validate(userMessage.toJSON());
-    if (error) {
-      throw new Error(`Invalid user message: ${error.message}`);
-    }
-
-    const sendTasks = closestSupernodesToRecipient.map(({ url }) =>
-      inferenceClient.sendUserMessage(url, userMessage)
-    );
-    const sendResults = await Promise.all(sendTasks);
-    logger.info(`Sent user messages: ${safeStringify(sendResults)}`);
-
-    const receivedMessages = await checkForNewIncomingMessages();
-
-    const messageDict = {
-      sent_messages: sendResults,
-      received_messages: receivedMessages,
-    };
-
-    return messageDict;
-  } catch (error) {
-    logger.error(
-      `Error in sendMessageAndCheckForNewIncomingMessages: ${error.message}`
-    );
     throw error;
   }
 }

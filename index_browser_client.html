@@ -31,6 +31,8 @@
     <script src="https://cdn.jsdelivr.net/npm/yup@1.4.0/index.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/index.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pouchdb@9.0.0/lib/index-browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.0.4/pako.min.js"></script>
     <style>
       .ground-glass {
         background-color: rgba(255, 255, 255, 0.8);
@@ -320,7 +322,7 @@
               document.addEventListener("DOMContentLoaded", async () => {
                 try {
                   const walletInfoResponse = await axios.get(
-                    `${API_URL}/get-wallet-info`
+                    "/get-wallet-info"
                   );
                   const walletInfo = walletInfoResponse.data.result;
                   const formattedWalletBalance =
@@ -915,7 +917,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         </p>
       </div>
     </div>
-
     <script type="text/javascript" src="libpastel_wasm.js"></script>
     <script type="text/javascript" src="sequelize_data_models_browser_client.js"></script>
     <script type="text/javascript" src="storage_browser_client.js"></script>
@@ -925,8 +926,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
     <script src="pastel_inference_client_browser_client.js"></script>
     <script src="end_to_end_functions_browser_client.js"></script>
     <script src="rpc_functions_browser_client.js"></script>
+
     <script>
-      const API_URL = 'http://localhost:3100';
       const MESSAGING_TIMEOUT_IN_SECONDS = 60;
       const LOADING_MESSAGE = "Wait while data is loaded...";
       const STORAGE_KEY = "validCreditPackTickets";
@@ -940,10 +941,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           clearTimeout(timeout);
           timeout = setTimeout(() => func.apply(context, args), wait);
         };
-      }
-
-      function formatNumberWithCommas(number) {
-        return number.toLocaleString();
       }
 
       function parseAndFormatNumber(value) {
@@ -975,48 +972,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return blob.size;
       }
 
-      function parseAndFormat(value) {
-        try {
-          if (typeof value === "string") {
-            // Check if the JSON string is already formatted
-            if (value.includes("\n")) {
-              return value;
-            }
-            // Parse JSON string to handle it properly
-            const parsedValue = JSON.parse(value);
-            return JSON.stringify(parsedValue, null, 4); // Indent JSON string
-          }
-          return JSON.stringify(value, null, 4); // Format other values
-        } catch (error) {
-          return value; // Return original value if parsing fails
-        }
-      }
-
-      function prettyJSON(data) {
-        if (data instanceof Map) {
-          data = Object.fromEntries(data); // Convert Map to object
-        }
-        if (
-          Array.isArray(data) ||
-          (typeof data === "object" && data !== null)
-        ) {
-          const formattedData = {};
-          for (const [key, value] of Object.entries(data)) {
-            if (typeof value === "string" && key.endsWith("_json")) {
-              formattedData[key] = parseAndFormat(value);
-            } else if (typeof value === "object" && value !== null) {
-              formattedData[key] = prettyJSON(value); // Recurse for nested objects
-            } else {
-              formattedData[key] = value; // Handle other types
-            }
-          }
-          return JSON.stringify(formattedData, null, 4); // Pretty print the object
-        } else if (typeof data === "string") {
-          return parseAndFormat(data); // Handle strings separately
-        }
-        return data; // Return data as is for other types
-      }
-
       function sanitizeJSON(jsonString) {
         return jsonString.replace(/[^\x20-\x7E]+/g, ""); // Remove non-printable ASCII characters
       }
@@ -1036,6 +991,17 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         result = result.replace(promptPattern, "");
 
         return result;
+      }
+
+      async function fetchValidPastelIDs() {
+        try {
+          // Replace "/list-pastel-id-tickets" api to getListPastelIdTickets
+          const { result } = await getListPastelIdTickets({ filter: "mine" })
+          return result.map((ticket) => ticket.ticket.pastelID);
+        } catch (error) {
+          console.error("Error retrieving Pastel ID tickets:", error);
+          return [];
+        }
       }
 
       function formatAndHighlightMessage(message) {
@@ -1077,29 +1043,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         currentStatus.style.fontFamily = "Montserrat, sans-serif";
         currentStatus.style.whiteSpace = "pre-wrap"; // Ensure wrapping
         currentStatus.innerHTML = formatAndHighlightMessage(message);
-      }
-
-      function abbreviateJSON(jsonString, maxLength) {
-        if (jsonString.length <= maxLength) return jsonString;
-        const abbreviated = jsonString.slice(0, maxLength) + "...";
-        const openBraces =
-          (jsonString.match(/{/g) || []).length -
-          (abbreviated.match(/{/g) || []).length;
-        const openBrackets =
-          (jsonString.match(/\[/g) || []).length -
-          (abbreviated.match(/\[/g) || []).length;
-        return abbreviated + "}".repeat(openBraces) + "]".repeat(openBrackets);
-      }
-
-      function logActionWithPayload(action, payloadName, jsonPayload) {
-        const maxPayloadLength = 10000;
-        let formattedPayload = prettyJSON(jsonPayload);
-        if (formattedPayload.length > maxPayloadLength) {
-          formattedPayload = abbreviateJSON(formattedPayload, maxPayloadLength);
-        }
-        logger.info(
-          `Now ${action} ${payloadName} with payload:\n${formattedPayload}`
-        );
       }
 
       async function setSelectedPastelIDAndPassphrase(selectedPastelID) {
@@ -1150,7 +1093,11 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
 
         async function postPassphrase(pastelID, encodedPassphrase) {
           try {
-            await setPastelIDPassphrase(pastelID, atob(encodedPassphrase));
+            // Replace "/set-pastel-id-passphrase" api to setPastelIDPassphrase
+            await setPastelIDPassphrase({
+              pastelID: pastelID,
+              passphrase: atob(encodedPassphrase),
+            });
 
             // Fetch the model menu after setting the PastelID and passphrase
             await fetchModelMenu();
@@ -1176,7 +1123,9 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
 
       async function checkCreditPackTicketInfo(txid) {
         try {
-          const { requestResponse, requestConfirmation, balanceInfo } = await getCreditPackTicketInfoEndToEnd(txid);
+          // Replace "/credit-pack-info/:txid" api to getCreditPackInfo
+          const { result } = await getCreditPackInfo({ txid });
+          const { requestResponse, requestConfirmation, balanceInfo } = result;
           document.getElementById("requestResponse").textContent =
             JSON.stringify(requestResponse, null, 2);
           document.getElementById("requestConfirmation").textContent =
@@ -1215,14 +1164,25 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         return `${baseURL}${txid}`;
       }
 
+      async function listPastelIDTickets() {
+        try {
+          // Replace "/list-pastel-id-tickets" api to getListPastelIdTickets
+          const { result } = await getListPastelIdTickets({ filter: "mine" });
+          return result;
+        } catch (error) {
+          console.error("Error retrieving Pastel ID tickets:", error);
+          return [];
+        }
+      }
+
       async function checkTrackingAddresses() {
         try {
-          const response = await listAddressAmounts();
-          if (!response.ok) {
+          // Replace "/list-address-amounts" api to getListAddressAmounts
+          const response = await getListAddressAmounts();
+          if (!response.success) {
             throw new Error("Failed to fetch address amounts");
           }
-          const data = await response.json();
-          const walletAddresses = Object.keys(data.result);
+          const walletAddresses = Object.keys(response.result);
 
           const trackingAddresses =
             document.querySelectorAll(".tracking-address");
@@ -1261,7 +1221,9 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             ) {
               validCreditPackTickets = JSON.parse(savedData);
             } else {
-              validCreditPackTickets = await getMyValidCreditPackTicketsEndToEnd() || [];
+              // Replace "/get-my-valid-credit-packs" api to getMyValidCreditPacks
+              const response = await getMyValidCreditPacks();
+              validCreditPackTickets = response.result;
               localStorage.setItem(
                 STORAGE_KEY,
                 JSON.stringify(validCreditPackTickets)
@@ -1269,7 +1231,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
               localStorage.setItem(STORAGE_TIMESTAMP_KEY, now);
             }
           } else {
-            validCreditPackTickets = await getMyValidCreditPackTicketsEndToEnd() || [];
+            const response = await getMyValidCreditPacks();
+            validCreditPackTickets = response.result;
             localStorage.setItem(
               STORAGE_KEY,
               JSON.stringify(validCreditPackTickets)
@@ -1278,7 +1241,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
 
           // Fetch wallet addresses
-          const walletResponse = await listAddressAmounts();
+          // Replace "/list-address-amounts" api to getListAddressAmounts
+          const walletResponse = await getListAddressAmounts();
           const walletAddresses = Object.keys(walletResponse.result);
 
           // Filter valid credit pack tickets based on tracking addresses
@@ -1459,12 +1423,14 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           const amountOfPSLForTrackingTransactions = 10.0;
           const creditPriceCushionPercentage = 0.15;
 
-          const estimatedTotalCostInPSLForCreditPackResponse = await estimateCreditPackCostEndToEnd(
+          // Replace "/estimate-credit-pack-cost" api to estimateCreditPackCost
+          const estimatedTotalCostInPSLForCreditPackResponse = await estimateCreditPackCost({
               desiredNumberOfCredits,
-              creditPriceCushionPercentage);
+              creditPriceCushionPercentage,
+            });
 
           const estimatedTotalCostInPSLForCreditPack =
-            estimatedTotalCostInPSLForCreditPackResponse.data.result;
+            estimatedTotalCostInPSLForCreditPackResponse.result;
 
           if (estimatedTotalCostInPSLForCreditPack === undefined) {
             throw new Error(
@@ -1503,22 +1469,27 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             throw new Error(insufficientFundsMessage);
           }
 
-          const response = await createAndFundNewPSLCreditTrackingAddress(amountToFundCreditTrackingAddress);
+          // Replace "/create-and-fund-new-address" api to createAndFundNewAddress
+          const response = await createAndFundNewAddress({
+            amount: amountToFundCreditTrackingAddress,
+          });
 
-          if (!response.data.success) {
+          if (!response.success) {
             throw new Error(
               "Failed to create and fund new credit tracking address"
             );
           }
 
           const creditUsageTrackingPSLAddress =
-            response.data.result.newCreditTrackingAddress;
+            response.result.newCreditTrackingAddress;
 
           logCreateTicketStatusMessage(
             "Credit tracking address created and funded successfully.",
             statusContent
           );
 
+
+          // Replace "/create-credit-pack-ticket" api to createCreditPackTicket
           const ticketResponse = await createCreditPackTicket({
             numCredits,
             creditUsageTrackingPSLAddress,
@@ -1526,12 +1497,12 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             maxPerCreditPrice,
           });
 
-          if (ticketResponse.data.success) {
+          if (ticketResponse.success) {
             logCreateTicketStatusMessage(
               "Credit pack ticket created successfully.",
               statusContent
             );
-            const result = ticketResponse.data.result;
+            const result = ticketResponse.result;
             const formattedResult = prettyJSON(result);
             logCreateTicketStatusMessage(
               `Result: ${formattedResult}`,
@@ -1586,39 +1557,11 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       // Handle inference request stuff:
       let modelMenu = null;
 
-      async function getInferenceModelMenu() {
-        try {
-          const pastelData = await getCurrentPastelIdAndPassphrase();
-
-          if (!pastelData.pastelID || !pastelData.passphrase) {
-            return {
-              success: false,
-              message: "Pastel ID and passphrase not set.",
-            };
-          }
-          const { validMasternodeListFullDF } = await checkSupernodeList();
-          const result = await getClosestSupernodeToPastelIDURL(
-            pastelData.pastelID,
-            validMasternodeListFullDF
-          );
-          if (result) {
-            supernodeURL = result.url;
-          }
-          const inferenceClient = new PastelInferenceClient(pastelData.pastelID, pastelData.passphrase);
-          const modelMenu = await inferenceClient.getModelMenu(
-            supernodeURL
-          );
-          return { success: true, modelMenu }
-        } catch (error) {
-          logger.error(`Error in getInferenceModelMenu: ${safeStringify(error)}`);
-          return { success: false, error: error.message };
-        }
-      }
-
       async function fetchModelMenu() {
         try {
+          // Replace "/get-inference-model-menu" api to getInferenceModelMenu
           const response = await getInferenceModelMenu();
-          modelMenu = response.data.modelMenu;
+          modelMenu = response.modelMenu;
           console.log("Model Menu:", modelMenu); // Debugging line, consider removing for production
           populateModelDropdown();
         } catch (error) {
@@ -1828,7 +1771,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
           try {
             displayLoading(true);
-            const response = await createAndRegisterNewPastelID(passphrase)
+            // Replace "/create-and-register-pastel-id" api to createAndRegisterPastelID
+            const response = await createAndRegisterPastelID({ passphraseForNewPastelID: passphrase });
             displayLoading(false);
             if (response.success) {
               displayMessage(
@@ -1860,13 +1804,18 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           const formData = new FormData();
           formData.append("pastelIDFile", pastelIDFile);
           try {
+            // Replace "/get-network-info" api to getNetworkInfo
             const { network } = await getNetworkInfo();
-            const response = await importPastelID(network, formData);
-            if (response.data.success) {
+            // Replace "/import-pastel-id" api to importPastelID
+            const response = await importPastelID({
+              network,
+              formData
+            });
+            if (response.success) {
               displayMessage("PastelID imported successfully!", true);
               location.reload(); // Refresh the page to update the UI
             } else {
-              displayMessage(response.data.message, false);
+              displayMessage(response.message, false);
             }
           } catch (error) {
             console.error("Error importing PastelID:", error);
@@ -1887,8 +1836,9 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         }
 
         try {
-          const myPslAddress = await getMyPslAddressWithLargestBalance();
-          document.getElementById("myPslAddress").textContent = myPslAddress;
+          // Replace "/get-my-psl-address-with-largest-balance" api to getMyPslAddressWithLargestBalance
+          const { result } = await getMyPslAddressWithLargestBalance();
+          document.getElementById("myPslAddress").textContent = result;
         } catch (error) {
           console.error(
             "Error displaying PSL address with largest balance:",
@@ -1931,6 +1881,17 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         );
         const refreshButton = document.getElementById("refreshButton");
 
+        async function fetchValidPastelIDs() {
+          try {
+            // Replace "/list-pastel-id-tickets" api to getListPastelIdTickets
+            const response = await getListPastelIdTickets({ filter: "mine" });
+            return response.result.map((ticket) => ticket.ticket.pastelID);
+          } catch (error) {
+            console.error("Error retrieving Pastel ID tickets:", error);
+            return [];
+          }
+        }
+
         const validPastelIDs = await fetchValidPastelIDs();
         const storedPastelIDs = Object.keys(localStorage);
 
@@ -1972,7 +1933,11 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           }
 
           try {
-            const response = await setPastelIdAndPassphrase(selectedPastelID,passphrase);
+            // Replace "/set-pastel-id-passphrase" api to setPastelIDPassphrase
+            const response = await setPastelIDPassphrase({
+              pastelID: selectedPastelID,
+              passphrase: passphrase,
+            });
 
             if (response.success) {
               document.getElementById("messageContainer").innerText =
@@ -2244,7 +2209,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           throw error;
         }
       }
-
       async function compressImage(imageBlob) {
         try {
           const compressedFile = await imageCompression(imageBlob, {
@@ -2549,41 +2513,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
       // Call updatePreviousRequestsList on page load
       document.addEventListener("DOMContentLoaded", updatePreviousRequestsList);
 
-      async function createInferenceRequest(requestPayload) {
-        const {
-          model_inference_type_string: modelInferenceTypeString,
-          model_parameters_json_b64,
-          model_input_data_json_b64,
-          selectedCreditPackTicketId: creditPackTicketPastelTxid,
-          maxCost: maximumInferenceCostInCredits,
-          model_canonical_name: requestedModelCanonicalString,
-        } = requestPayload;
-
-        try {
-          const burnAddress = await configureRPCAndSetBurnAddress();
-          const modelParameters = JSON.parse(
-            Buffer.from(model_parameters_json_b64, "base64").toString()
-          );
-          const modelInputData = JSON.parse(
-            Buffer.from(model_input_data_json_b64, "base64").toString()
-          );
-          console.log(`Model Inference Type: ${modelInferenceTypeString}`);
-          const result = await handleInferenceRequestEndToEnd(
-            creditPackTicketPastelTxid,
-            modelInputData,
-            requestedModelCanonicalString,
-            modelInferenceTypeString,
-            modelParameters,
-            maximumInferenceCostInCredits,
-            burnAddress
-          );
-          return { success: true, result };
-        } catch (error) {
-          console.error("Error in create-inference-request:", error);
-          return { success: false, error: error.message };
-        }
-      }
-
       async function createNewInferenceRequest(
         selectedCreditPackTicketId,
         selectedInferenceType,
@@ -2621,11 +2550,13 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             maxCost,
             model_canonical_name: selectedModelCanonicalName,
           };
-          // TODO
+
+          // Replace "/create-inference-request" api to createInferenceRequest
           const response = await createInferenceRequest(requestPayload);
 
           if (response.success) {
             logStatusMessage("Inference request created successfully.");
+
             const inferenceResultDict =
               response.result.inferenceResultDict;
 
@@ -2885,14 +2816,18 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         try {
           const userPastelID =
             document.getElementById("pastelIDDropdown").value;
-
-          const response = await getBestSupernodeUrl(userPastelID);
+          // Replace "/get-best-supernode-url" api to getBestSupernodeUrl
+          const response = await getBestSupernodeUrl({ userPastelID });
           const supernodeURL = response.supernodeURL;
           const closestSupernodeIP = supernodeURL.match(
             /(?:https?:\/\/)?([^:/]+)/i
           )[1];
 
-          const messageDict = await checkForNewIncomingMessages();
+          // Replace "/get-received-messages" api to getReceivedMessages
+          const messagesResponse = await getReceivedMessages({
+            timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
+          });
+          const messageDict = messagesResponse.messageDict;
 
           const receivedMessagesContainer =
             document.getElementById("receivedMessages");
@@ -2954,7 +2889,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         .getElementById("createPastelIDButton")
         .addEventListener("click", async () => {
           try {
-            await axios.post(`${API_URL}/check-for-pastel-id`, { autoRegister: true });
+            // Replace "/check-for-pastel-id" api to checkForPastelID
+            await checkForPastelID({ autoRegister: true });
             location.reload(); // Refresh the page to update the UI
           } catch (error) {
             console.error("Error creating PastelID:", error);
@@ -2967,7 +2903,8 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
         .addEventListener("click", async () => {
           const privKey = document.getElementById("importPrivKey").value;
           try {
-            await importPrivKey(privKey);
+            // Replace "/import-priv-key" api to importPrivKey
+            await importPrivKey({ zcashPrivKey: privKey });
             alert("Private key imported successfully!");
           } catch (error) {
             console.error("Error importing private key:", error);
@@ -2982,20 +2919,21 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           const formData = new FormData();
           formData.append("walletFile", walletFile);
           try {
-            await importWallet(formData);
+            // Replace "/import-wallet" api to importWallet
+            await importWallet({ filename: formData });
             alert("Wallet imported successfully!");
           } catch (error) {
             console.error("Error importing wallet:", error);
           }
         });
 
-      // Done
       // Handle list address amounts button click
       document
         .getElementById("listAddressAmountsButton")
         .addEventListener("click", async () => {
           try {
-            const response = await listAddressAmounts();
+            // Replace "/list-address-amounts" api to getListAddressAmounts
+            const response = await getListAddressAmounts();
             const addressAmounts = response.result;
             console.log("Address amounts:", addressAmounts);
 
@@ -3039,13 +2977,14 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
             console.error("Error retrieving address amounts:", error);
           }
         });
-
       // Handle get wallet info button click
       document
         .getElementById("getWalletInfoButton")
         .addEventListener("click", async () => {
           try {
-            const walletInfo = await getWalletInfo()();
+            // Replace "/get-wallet-info" api to getWalletInfo
+            const response = await getWalletInfo();
+            const walletInfo = response.result;
             console.log("Wallet info:", walletInfo);
 
             // Populate the table
@@ -3209,53 +3148,6 @@ Hello, this is a brand 🍉 NEW test message from a regular user!</textarea
           `[${timestamp}] [${logLevel}] ${formattedParts}`.split("\n");
         messageLines.forEach((line) => term.writeln(line));
       }
-
-      // Need to replace with a call API
-      fetch(`${API_URL}/ws-url`)
-        .then((response) => response.json())
-        .then((data) => {
-          const socket = new WebSocket(data.wsUrl);
-
-          socket.onopen = () => {
-            console.log("WebSocket connection established");
-          };
-
-          socket.onmessage = (event) => {
-            if (event.data) {
-              const logMessage = JSON.parse(event.data);
-              logMessageToTerminal(term, logMessage);
-
-              if (displayInferenceRequestLoggerMessages) {
-                logStatusMessage(logMessage.message);
-              }
-
-              if (displayCreateTicketLoggerMessages) {
-                const statusContainer = document.getElementById(
-                  "createTicketStatusContainer"
-                );
-                const statusContent =
-                  document.getElementById("createTicketStatus");
-                if (logMessage.message) {
-                  logCreateTicketStatusMessage(
-                    logMessage.message,
-                    statusContent
-                  );
-                }
-              }
-            }
-          };
-
-          socket.onclose = () => {
-            console.log("WebSocket connection closed");
-          };
-
-          socket.onerror = (error) => {
-            console.error("WebSocket error:", error);
-          };
-        })
-        .catch((error) => {
-          console.error("Error fetching WebSocket URL:", error);
-        });
 
       function toggleTerminal() {
         const terminal = document.getElementById("terminal");

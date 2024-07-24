@@ -1,5 +1,3 @@
-const Joi = require("joi");
-
 const supernodeListSchema = yup.object({
   txid_vout: yup.string().required(),
   supernode_status: yup.string().required(),
