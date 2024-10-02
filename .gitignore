@@ -140,4 +140,25 @@ dist
 #Asciinema recordings
 *.cast
 /my-local-pastelid-cache
+
 /supernode-cache
+.node-persist/
+bun.lockb
+combined.log
+error.log
+supernode-cache/
+/supernode-cache/*
+.node-persist/
+/.node-persist/*
+LICENSE
+README.md
+index.js
+single_file_pastel_inference_client.txt
+/single_file_pastel_inference_client.txt
+intermediate_promo_pack_results.json
+/intermediate_promo_pack_results.json
+/generated_promo_packs/
+generated_promo_packs/
+invalid_passphrase_pastelids.json
+recovered_packs.json
+recovered_pastelids.json
