@@ -360,7 +360,7 @@ async function signMessageWithPastelID(pastelid, messageToSign) {
   }
 }
 
-async function createAndRegisterNewPastelID() {
+async function createAndRegisterNewPastelID(passphraseForNewPastelID) {
   try {
     const newPastelIDObjString = parseWasmResponse(() =>
       pastelInstance.MakeNewPastelID()
@@ -368,7 +368,7 @@ async function createAndRegisterNewPastelID() {
     const newPastelIDObj = JSON.parse(newPastelIDObjString);
     const newPastelID = newPastelIDObj.data;
 
-    // Note: Registration process might need to be implemented separately as there's no direct method for it
+    // Note: Registration process might need to be implemented separately
 
     return {
       success: true,
@@ -442,7 +442,9 @@ async function importWallet(serializedWallet, password) {
       throw new Error("Invalid wallet file structure");
     }
     parseWasmResponse(() => pastelInstance.ImportWallet(walletData.data));
-    parseWasmResponse(() => pastelInstance.UnlockWallet(password));
+    if (password) {
+      parseWasmResponse(() => pastelInstance.UnlockWallet(password));
+    }
     return true;
   } catch (error) {
     logger.error(`Error in importWallet: ${safeStringify(error)}`);
@@ -452,10 +454,9 @@ async function importWallet(serializedWallet, password) {
 
 async function exportWallet() {
   try {
-    const exportedWallet = parseWasmResponse(() =>
-      pastelInstance.ExportWallet()
-    );
-    return exportedWallet;
+    const content = parseWasmResponse(() => pastelInstance.ExportWallet());
+    const parsedContent = JSON.parse(content);
+    return JSON.stringify({ data: parsedContent.data });
   } catch (error) {
     logger.error(`Error in exportWallet: ${safeStringify(error)}`);
     throw error;
@@ -662,10 +663,9 @@ async function getMyPslAddressWithLargestBalance() {
       pastelInstance.GetAddresses()
     );
     const addresses = JSON.parse(addressesString);
-
     // Note: There's no direct method to get balances, so we might need to implement this differently
     // For now, we'll just return the first address
-    return addresses[0];
+    return addresses.data[0];
   } catch (error) {
     logger.error(
       `Error in getMyPslAddressWithLargestBalance: ${safeStringify(error)}`
@@ -680,7 +680,7 @@ async function getPastelIDs() {
       pastelInstance.GetPastelIDs()
     );
     const pastelIDs = JSON.parse(pastelIDsString);
-    return pastelIDs;
+    return pastelIDs.data;
   } catch (error) {
     logger.error(`Error in getPastelIDs: ${safeStringify(error)}`);
     throw error;

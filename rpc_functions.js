@@ -1,3 +1,5 @@
+// rpc_functions.js
+
 require("dotenv").config();
 const http = require("http");
 const https = require("https");
@@ -15,6 +17,7 @@ const { execSync, spawn } = require("child_process");
 const storage = require("node-persist");
 const { setPastelIdAndPassphrase } = require("./storage");
 let rpc_connection;
+const globals = require("./globals");
 
 // Initialize the storage
 storage.init();
@@ -106,10 +109,33 @@ function searchFileRecursively(directory, filename) {
 async function getLocalRPCSettings(
   directoryWithPastelConf = path.join(os.homedir(), ".pastel")
 ) {
+  let newDirectoryWithPastelConf = directoryWithPastelConf;
+  if (process.platform === "win32") {
+    newDirectoryWithPastelConf = path.join(
+      os.homedir(),
+      "AppData",
+      "Roaming",
+      "Pastel"
+    );
+  }
+  if (process.platform === "darwin") {
+    newDirectoryWithPastelConf = path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "Pastel"
+    );
+  }
+  if (["linux"].indexOf(process.platform) !== -1) {
+    newDirectoryWithPastelConf = newDirectoryWithPastelConf.replace(
+      / /g,
+      "\\ "
+    );
+  }
   await storage.init();
   let pastelConfPath =
     (await storage.getItem("pastelConfPath")) ||
-    path.join(directoryWithPastelConf, "pastel.conf");
+    path.join(newDirectoryWithPastelConf, "pastel.conf");
   if (!fs.existsSync(pastelConfPath)) {
     console.log(
       `pastel.conf not found in stored path or default directory, scanning the system...`
@@ -203,9 +229,9 @@ class AsyncAuthServiceProxy {
   constructor(
     serviceUrl,
     serviceName = null,
-    reconnectTimeout = 15,
+    reconnectTimeout = 3,
     reconnectAmount = 2,
-    requestTimeout = 20
+    requestTimeout = 10
   ) {
     this.serviceUrl = serviceUrl;
     this.serviceName = serviceName;
@@ -390,13 +416,7 @@ async function verifyMessageWithPastelID(
   return verificationResult.verification; // Return the verification result
 }
 
-async function sendToAddress(
-  address,
-  amount,
-  comment = "",
-  commentTo = "",
-  subtractFeeFromAmount = false
-) {
+async function sendToAddress(address, amount, comment = "") {
   const isConnectionReady = await waitForRPCConnection();
   if (!isConnectionReady) {
     logger.error("RPC connection is not available. Cannot proceed.");
@@ -411,19 +431,21 @@ async function sendToAddress(
       return { success: false, message };
     }
     // Proceed with sending the amount
-    const result = await rpc_connection.sendtoaddress(
-      address,
-      amount,
-      comment,
-      commentTo,
-      subtractFeeFromAmount
-    );
+    const result = await rpc_connection.sendtoaddress(address, amount, comment);
     return { success: true, result };
   } catch (error) {
-    logger.error(`Error in sendToAddress: ${safeStringify(error)}`);
+    logger.error(
+      `Error in sendToAddress: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     return {
       success: false,
-      message: `Error in sendToAddress: ${safeStringify(error)}`,
+      message: `Error in sendToAddress: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`,
     };
   }
 }
@@ -451,7 +473,12 @@ async function sendMany(
     );
     return result;
   } catch (error) {
-    logger.error(`Error in sendMany: ${safeStringify(error)}`);
+    logger.error(
+      `Error in sendMany: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     return null;
   }
 }
@@ -649,8 +676,7 @@ async function signMessageWithPastelID(pastelid, messageToSign, passphrase) {
   try {
     const isConnectionReady = await waitForRPCConnection();
     if (!isConnectionReady) {
-      logger.error("RPC connection is not available. Cannot proceed.");
-      return; // Stop the function if the connection is not available
+      throw new Error("RPC connection is not available.");
     }
     const responseObj = await rpc_connection.pastelid(
       "sign",
@@ -659,10 +685,14 @@ async function signMessageWithPastelID(pastelid, messageToSign, passphrase) {
       passphrase,
       "ed448"
     );
-    return responseObj.signature;
+    const sig = await responseObj.signature;
+    return sig;
   } catch (error) {
-    logger.error(`Error in signMessageWithPastelID: ${safeStringify(error)}`);
-    return null;
+    logger.error(`Error in signMessageWithPastelID: ${error.message}`);
+    if (error.message.includes("Invalid passphrase")) {
+      throw new Error("Invalid passphrase for PastelID");
+    }
+    throw error;
   }
 }
 
@@ -688,7 +718,10 @@ async function checkPSLAddressBalanceAlternative(addressToCheck) {
     return balanceAtAddress;
   } catch (error) {
     logger.error(
-      `Error in checkPSLAddressBalanceAlternative: ${safeStringify(error)}`
+      `Error in checkPSLAddressBalanceAlternative: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
     );
     throw error;
   }
@@ -718,7 +751,30 @@ async function getMyPslAddressWithLargestBalance() {
     return addressWithLargestBalance;
   } catch (error) {
     logger.error(
-      `Error in getMyPslAddressWithLargestBalance: ${safeStringify(error)}`
+      `Error in getMyPslAddressWithLargestBalance: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
+    throw error;
+  }
+}
+
+async function dumpPrivKey(tAddr) {
+  try {
+    const isConnectionReady = await waitForRPCConnection();
+    if (!isConnectionReady) {
+      logger.error("RPC connection is not available. Cannot proceed.");
+      return;
+    }
+    const result = await rpc_connection.dumpprivkey(tAddr);
+    logger.info(`Dumped private key for address: ${tAddr}`);
+    return result;
+  } catch (error) {
+    logger.error(
+      `Error dumping private key for address ${tAddr}: ${safeStringify(
+        error
+      ).slice(0, globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE)}`
     );
     throw error;
   }
@@ -732,14 +788,13 @@ async function createAndFundNewPSLCreditTrackingAddress(
     logger.error("RPC connection is not available. Cannot proceed.");
     return; // Stop the function if the connection is not available
   }
+  const extraCushion = 1.0; // Add an extra PSL to the funding address to ensure it has a minimum balance
   try {
     const newCreditTrackingAddress = await rpc_connection.getnewaddress();
     const sendResult = await sendToAddress(
       newCreditTrackingAddress,
-      amountOfPSLToFundAddressWith,
-      "Funding new credit tracking address",
-      "",
-      false
+      amountOfPSLToFundAddressWith + extraCushion,
+      "Funding new credit tracking address"
     );
     if (!sendResult.success) {
       logger.error(
@@ -790,6 +845,9 @@ async function waitForTableCreation() {
 
 async function checkSupernodeList() {
   try {
+    // Ensure the table is created
+    await SupernodeList.sync();
+
     const isConnectionReady = await waitForRPCConnection();
     if (!isConnectionReady) {
       logger.error("RPC connection is not available. Cannot proceed.");
@@ -825,14 +883,14 @@ async function checkSupernodeList() {
     const masternodeListFullDF = masternodeListFullData.map((data) => {
       const rank = masternodeListRank[data.txid_vout];
       const pubkey = masternodeListPubkey[data.txid_vout];
-      const extra = masternodeListExtra[data.txid_vout];
+      const extra = masternodeListExtra[data.txid_vout] || {};
       return {
         ...data,
         rank: Number(rank),
         pubkey,
-        extAddress: extra && extra.extAddress,
-        extP2P: extra && extra.extP2P,
-        extKey: extra && extra.extKey,
+        extAddress: extra.extAddress || "NA",
+        extP2P: extra.extP2P || "NA",
+        extKey: extra.extKey || "NA", // Fill missing extKey with "NA"
         activedays: data.activeseconds / 86400,
       };
     });
@@ -882,7 +940,12 @@ async function checkSupernodeList() {
     );
     return { validMasternodeListFullDF, masternodeListFullDFJSON };
   } catch (error) {
-    logger.error(`An error occurred: ${error.message}`);
+    logger.error(
+      `An error occurred: ${error.message.slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
   }
 }
 
@@ -924,8 +987,6 @@ async function listPastelIDTickets(filter = "mine", minheight = null) {
         params.push(minheight);
       }
       const result = await rpc_connection.tickets("list", "id", ...params);
-      logger.info(`Pastel ID Tickets: ${result}`);
-      logger.info(`Listed PastelID tickets with filter: ${filter}`);
       return result;
     }
     // If filter is "mine", combine results from `pastelid list` and `tickets find id <PastelID>`
@@ -950,7 +1011,6 @@ async function listPastelIDTickets(filter = "mine", minheight = null) {
         }
       }
     }
-    logger.info(`Registered Pastel ID Tickets: ${registeredTickets}`);
     logger.info(`Listed registered PastelID tickets with filter: ${filter}`);
     return registeredTickets;
   } catch (error) {
@@ -974,7 +1034,6 @@ async function listPastelIDTicketsOld(filter = "mine", minheight = null) {
       params.push(minheight);
     }
     const result = await rpc_connection.tickets("list", "id", ...params);
-    logger.info(`Pastel ID Tickets: ${result}`);
     logger.info(`Listed PastelID tickets with filter: ${filter}`);
     return result;
   } catch (error) {
@@ -1096,7 +1155,12 @@ async function getContractTicket(txid, decodeProperties = true) {
   }
 }
 
-async function importPrivKey(zcashPrivKey, label = "", rescan = true) {
+async function importPrivKey(
+  zcashPrivKey,
+  label = "",
+  rescan = true,
+  rescan_start = 730000
+) {
   try {
     const isConnectionReady = await waitForRPCConnection();
     if (!isConnectionReady) {
@@ -1106,12 +1170,18 @@ async function importPrivKey(zcashPrivKey, label = "", rescan = true) {
     const result = await rpc_connection.importprivkey(
       zcashPrivKey,
       label,
-      rescan
+      rescan,
+      rescan_start
     );
     logger.info(`Imported private key with label: ${label}`);
     return result;
   } catch (error) {
-    logger.error(`Error importing private key: ${safeStringify(error)}`);
+    logger.error(
+      `Error importing private key: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     throw error;
   }
 }
@@ -1127,7 +1197,12 @@ async function importWallet(filename) {
     logger.info(`Imported wallet from file: ${filename}`);
     return result;
   } catch (error) {
-    logger.error(`Error importing wallet: ${safeStringify(error)}`);
+    logger.error(
+      `Error importing wallet: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     throw error;
   }
 }
@@ -1148,31 +1223,32 @@ async function listAddressAmounts(includeEmpty = false, isMineFilter = "all") {
     );
     return result;
   } catch (error) {
-    logger.error(`Error listing address amounts: ${safeStringify(error)}`);
+    logger.error(
+      `Error listing address amounts: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     throw error;
   }
 }
 
-async function getBalance(
-  account = "*",
-  minConf = 1,
-  includeWatchOnly = false
-) {
+async function getBalance() {
   try {
     const isConnectionReady = await waitForRPCConnection();
     if (!isConnectionReady) {
       logger.error("RPC connection is not available. Cannot proceed.");
       return;
     }
-    const result = await rpc_connection.getbalance(
-      account,
-      minConf,
-      includeWatchOnly
-    );
-    logger.info(`Got balance for account: ${account}`);
+    const result = await rpc_connection.getbalance();
     return result;
   } catch (error) {
-    logger.error(`Error getting balance: ${safeStringify(error)}`);
+    logger.error(
+      `Error getting balance: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     throw error;
   }
 }
@@ -1188,7 +1264,12 @@ async function getWalletInfo() {
     logger.info("Got wallet info");
     return result;
   } catch (error) {
-    logger.error(`Error getting wallet info: ${safeStringify(error)}`);
+    logger.error(
+      `Error getting wallet info: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     throw error;
   }
 }
@@ -1204,7 +1285,12 @@ async function getNewAddress() {
     logger.info("Got new Pastel address");
     return result;
   } catch (error) {
-    logger.error(`Error getting new address: ${safeStringify(error)}`);
+    logger.error(
+      `Error getting new address: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
     throw error;
   }
 }
@@ -1233,7 +1319,10 @@ async function checkForRegisteredPastelID() {
     return null;
   } catch (error) {
     logger.error(
-      `Error in checkForRegisteredPastelID: ${safeStringify(error)}`
+      `Error in checkForRegisteredPastelID: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
     );
     throw error;
   }
@@ -1261,18 +1350,76 @@ function getPastelIDDirectory(network) {
   const homeDir = process.env.HOME;
   let pastelIDDir = "";
   if (network === "mainnet") {
-    pastelIDDir = path.join(homeDir, ".pastel", "pastelkeys");
+    if (process.platform === "linux") {
+      pastelIDDir = path.join(homeDir, ".pastel", "pastelkeys");
+    } else if (process.platform === "darwin") {
+      pastelIDDir = path.join(
+        os.homedir(),
+        "Library",
+        "Application Support",
+        "Pastel",
+        "pastelkeys"
+      );
+    } else {
+      pastelIDDir = path.join(
+        os.homedir(),
+        "AppData",
+        "Roaming",
+        "Pastel",
+        "pastelkeys"
+      );
+    }
   } else if (network === "testnet") {
-    pastelIDDir = path.join(homeDir, ".pastel", "testnet3", "pastelkeys");
+    if (process.platform === "linux") {
+      pastelIDDir = path.join(homeDir, ".pastel", "testnet3", "pastelkeys");
+    } else if (process.platform === "darwin") {
+      pastelIDDir = path.join(
+        os.homedir(),
+        "Library",
+        "Application Support",
+        "Pastel",
+        "testnet3",
+        "pastelkeys"
+      );
+    } else {
+      pastelIDDir = path.join(
+        os.homedir(),
+        "AppData",
+        "Roaming",
+        "Pastel",
+        "testnet3",
+        "pastelkeys"
+      );
+    }
   } else if (network === "devnet") {
-    pastelIDDir = path.join(homeDir, ".pastel", "devnet3", "pastelkeys");
+    if (process.platform === "linux") {
+      pastelIDDir = path.join(homeDir, ".pastel", "devnet3", "pastelkeys");
+    } else if (process.platform === "darwin") {
+      pastelIDDir = path.join(
+        os.homedir(),
+        "Library",
+        "Application Support",
+        "Pastel",
+        "devnet3",
+        "pastelkeys"
+      );
+    } else {
+      pastelIDDir = path.join(
+        os.homedir(),
+        "AppData",
+        "Roaming",
+        "Pastel",
+        "devnet3",
+        "pastelkeys"
+      );
+    }
   }
   return pastelIDDir;
 }
 
 async function getPastelIDsFromDirectory(directory) {
   const files = await fs.promises.readdir(directory);
-  const pastelIDs = files.filter((file) => file.length === 87);
+  const pastelIDs = files.filter((file) => file.length === 86);
   return pastelIDs;
 }
 
@@ -1283,10 +1430,13 @@ async function isPastelIDRegistered(pastelID) {
       "id",
       pastelID
     );
-    return ticketFindResult.length > 0;
+    return !!ticketFindResult?.ticket?.pastelID;
   } catch (error) {
     logger.error(
-      `Error checking if Pastel ID is registered: ${safeStringify(error)}`
+      `Error checking if Pastel ID is registered: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
     );
     return false;
   }
@@ -1323,7 +1473,10 @@ async function createAndRegisterPastelID(burnAddress) {
     }
   } catch (error) {
     logger.error(
-      `Error creating and registering Pastel ID: ${safeStringify(error)}`
+      `Error creating and registering Pastel ID: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
     );
     throw error;
   }
@@ -1382,9 +1535,82 @@ async function createAndRegisterNewPastelID(passphraseForNewPastelID) {
     };
   } catch (error) {
     logger.error(
-      `Error in createAndRegisterNewPastelID: ${safeStringify(error)}`
+      `Error in createAndRegisterNewPastelID: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
     );
     return { success: false, message: error.message };
+  }
+}
+
+async function isCreditPackConfirmed(txid) {
+  try {
+    const ticket = await getPastelTicket(txid);
+    return ticket && ticket.height > 0;
+  } catch (error) {
+    logger.error(
+      `Error checking if credit pack is confirmed: ${safeStringify(error).slice(
+        0,
+        globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+      )}`
+    );
+    return false;
+  }
+}
+
+async function ensureTrackingAddressesHaveMinimalPSLBalance(
+  addressesList = null
+) {
+  try {
+    const isConnectionReady = await waitForRPCConnection();
+    if (!isConnectionReady) {
+      logger.error("RPC connection is not available. Cannot proceed.");
+      return; // Stop the function if the connection is not available
+    }
+    let addresses = addressesList;
+    if (!addresses) {
+      // If no address list is provided, retrieve all addresses and their balances
+      addresses = Object.keys(await rpc_connection.listaddressamounts());
+    }
+
+    // Get the address with the largest balance to use for sending PSL if needed
+    const fundingAddress = await getMyPslAddressWithLargestBalance();
+    if (!fundingAddress) {
+      logger.error("No address with sufficient funds to fund other addresses.");
+      return; // No address has sufficient funds
+    }
+
+    for (const address of addresses) {
+      const balance = await checkPSLAddressBalance(address); // Get balance for each address
+      if (balance < 1.0) {
+        // If balance is less than 1.0 PSL, send the needed amount
+        const amountNeeded = Math.round((1.0 - balance) * 10000) / 10000;
+        if (amountNeeded > 0.0001) {
+          const sendResult = await sendToAddress(
+            address,
+            amountNeeded,
+            "Balancing PSL amount to ensure tracking address has a minimum balance of 1 PSL"
+          );
+          if (sendResult.success) {
+            logger.info(
+              `Sent ${amountNeeded} PSL from address ${fundingAddress} to address ${address} to maintain minimum balance. TXID: ${sendResult.result}`
+            );
+          } else {
+            logger.error(
+              `Failed to send PSL from address ${fundingAddress} to address ${address}: ${sendResult.message}`
+            );
+          }
+        }
+      }
+    }
+  } catch (error) {
+    logger.error(
+      `Error in ensureTrackingAddressesHaveMinimalPSLBalance: ${safeStringify(
+        error
+      )}`
+    );
+    throw error;
   }
 }
 
@@ -1440,4 +1666,7 @@ module.exports = {
   stopPastelDaemon,
   startPastelDaemon,
   getMyPslAddressWithLargestBalance,
+  isCreditPackConfirmed,
+  ensureTrackingAddressesHaveMinimalPSLBalance,
+  dumpPrivKey,
 };

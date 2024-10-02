@@ -3,15 +3,31 @@ const crypto = require("crypto");
 const zstd = require("zstd-codec").ZstdCodec;
 const axios = require("axios");
 const Sequelize = require("sequelize");
+const fs = require("fs");
+const path = require("path");
 const ping = require("ping");
 const { logger, safeStringify } = require("./logger");
 const supernodeCacheStorage = require("node-persist");
+const { getCurrentPastelIdAndPassphrase } = require("./storage");
+const globals = require("./globals");
 
 const {
   verifyMessageWithPastelID,
   getBestBlockHashAndMerkleRoot,
   checkSupernodeList,
+  getPastelIDDirectory,
+  getLocalRPCSettings,
+  initializeRPCConnection,
+  importPrivKey,
+  waitForRPCConnection,
+  stopPastelDaemon,
+  startPastelDaemon,
+  signMessageWithPastelID,
+  isPastelIDRegistered,
+  isCreditPackConfirmed,
 } = require("./rpc_functions");
+
+const MAX_CACHE_AGE_MS = 1 * 60 * 1000; // 1 minute in milliseconds
 
 const { messageSchema } = require("./validation_schemas");
 
@@ -29,6 +45,45 @@ const MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS = parseInt(
 
 async function initializeSupernodeCacheStorage() {
   await supernodeCacheStorage.init({ dir: "./supernode-cache" });
+  await clearOldCache();
+}
+
+async function clearOldCache() {
+  const currentTime = Date.now();
+  const cacheKeys = await supernodeCacheStorage.keys();
+
+  for (const key of cacheKeys) {
+    const item = await supernodeCacheStorage.getItem(key);
+    if (item && item.timestamp) {
+      if (currentTime - item.timestamp > MAX_CACHE_AGE_MS) {
+        await supernodeCacheStorage.removeItem(key);
+      }
+    } else {
+      // If the item doesn't have a timestamp, remove it as well
+      await supernodeCacheStorage.removeItem(key);
+    }
+  }
+}
+
+async function storeInCache(key, data) {
+  await supernodeCacheStorage.setItem(key, {
+    timestamp: Date.now(),
+    data: data,
+  });
+}
+
+// Modify the function that retrieves data from the cache
+async function getFromCache(key) {
+  const item = await supernodeCacheStorage.getItem(key);
+  if (item && item.timestamp) {
+    if (Date.now() - item.timestamp <= MAX_CACHE_AGE_MS) {
+      return item.data;
+    } else {
+      // Data is too old, remove it
+      await supernodeCacheStorage.removeItem(key);
+    }
+  }
+  return null;
 }
 
 async function fetchCurrentPSLMarketPrice() {
@@ -46,7 +101,12 @@ async function fetchCurrentPSLMarketPrice() {
       const priceCG = responseCG.data.pastel.usd;
       return { priceCMC, priceCG };
     } catch (error) {
-      logger.error(`Error fetching PSL market prices: ${error.message}`);
+      logger.error(
+        `Error fetching PSL market prices: ${error.message.slice(
+          0,
+          globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+        )}`
+      );
       return { priceCMC: null, priceCG: null };
     }
   }
@@ -490,29 +550,55 @@ async function validateHashFields(modelInstance, validationErrors) {
 
 async function getClosestSupernodePastelIDFromList(
   localPastelID,
-  supernodePastelIDs,
+  filteredSupernodes,
   maxResponseTimeInMilliseconds = 800
 ) {
   await initializeSupernodeCacheStorage();
-  const filteredSupernodePastelIDs =
-    await filterSupernodesByPingResponseTimeAndPortResponse(
-      supernodePastelIDs,
-      maxResponseTimeInMilliseconds
-    );
+  if (!filteredSupernodes || filteredSupernodes.length === 0) {
+    logger.warn("No filtered supernodes available");
+    return null;
+  }
+
   const xorDistances = await Promise.all(
-    filteredSupernodePastelIDs.map(async (supernodePastelID) => {
-      const distance = await calculateXORDistance(
-        localPastelID,
-        supernodePastelID
-      );
-      return { pastelID: supernodePastelID, distance };
+    filteredSupernodes.map(async (supernode) => {
+      let pastelID;
+      if (typeof supernode === "string") {
+        pastelID = supernode;
+      } else if (supernode && supernode.pastelID) {
+        pastelID = supernode.pastelID;
+      } else {
+        logger.warn(`Invalid supernode data: ${JSON.stringify(supernode)}`);
+        return null;
+      }
+
+      try {
+        const distance = await calculateXORDistance(localPastelID, pastelID);
+        return { pastelID, distance: BigInt(distance) };
+      } catch (error) {
+        logger.error(
+          `Error calculating XOR distance: ${error.message.slice(
+            0,
+            globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+          )}`
+        );
+        return null;
+      }
     })
   );
-  const sortedXorDistances = xorDistances.sort((a, b) => {
+
+  const validDistances = xorDistances.filter(Boolean);
+
+  if (validDistances.length === 0) {
+    logger.warn("No valid XOR distances calculated");
+    return null;
+  }
+
+  const sortedXorDistances = validDistances.sort((a, b) => {
     if (a.distance < b.distance) return -1;
     if (a.distance > b.distance) return 1;
     return 0;
   });
+
   return sortedXorDistances[0].pastelID;
 }
 
@@ -615,31 +701,52 @@ async function validatePastelIDSignatureFields(
 async function getClosestSupernodeToPastelIDURL(
   inputPastelID,
   supernodeListDF,
-  maxResponseTimeInMilliseconds = 800
+  maxResponseTimeInMilliseconds = 1200
 ) {
+  logger.info(
+    `Attempting to find closest supernode for PastelID: ${inputPastelID}`
+  );
   if (!inputPastelID) {
-    return null;
+    logger.warn("No input PastelID provided");
+    return { url: null, pastelID: null };
   }
   await initializeSupernodeCacheStorage();
-  const filteredSupernodePastelIDs =
-    await filterSupernodesByPingResponseTimeAndPortResponse(
-      supernodeListDF,
-      maxResponseTimeInMilliseconds
-    );
-  if (filteredSupernodePastelIDs.length > 0) {
+  const filteredSupernodes = await filterSupernodes(
+    supernodeListDF,
+    maxResponseTimeInMilliseconds
+  );
+  if (filteredSupernodes.length > 0) {
     const closestSupernodePastelID = await getClosestSupernodePastelIDFromList(
       inputPastelID,
-      filteredSupernodePastelIDs
+      filteredSupernodes,
+      maxResponseTimeInMilliseconds
     );
-    const supernodeURL = await getSupernodeUrlFromPastelID(
-      closestSupernodePastelID,
-      supernodeListDF
+    if (!closestSupernodePastelID) {
+      logger.warn("No closest supernode PastelID found");
+      return { url: null, pastelID: null };
+    }
+
+    const closestSupernode = supernodeListDF.find(
+      (supernode) => supernode.extKey === closestSupernodePastelID
     );
-    return { url: supernodeURL, pastelID: closestSupernodePastelID };
+
+    if (closestSupernode) {
+      const supernodeURL = `http://${
+        closestSupernode.ipaddress_port.split(":")[0]
+      }:7123`;
+      try {
+        await axios.get(supernodeURL, {
+          timeout: maxResponseTimeInMilliseconds,
+        });
+        return { url: supernodeURL, pastelID: closestSupernodePastelID };
+      } catch (error) {
+        return { url: null, pastelID: null };
+      }
+    }
   }
+  logger.warn("No filtered supernodes available");
   return { url: null, pastelID: null };
 }
-
 async function getNClosestSupernodesToPastelIDURLs(
   n,
   inputPastelID,
@@ -647,37 +754,88 @@ async function getNClosestSupernodesToPastelIDURLs(
   maxResponseTimeInMilliseconds = 800
 ) {
   if (!inputPastelID) {
-    return null;
+    logger.warn("No input PastelID provided");
+    return [];
   }
+
   await initializeSupernodeCacheStorage();
-  const filteredSupernodePastelIDs =
-    await filterSupernodesByPingResponseTimeAndPortResponse(
+
+  try {
+    const filteredSupernodes = await filterSupernodes(
       supernodeListDF,
       maxResponseTimeInMilliseconds
     );
-  const xorDistances = await Promise.all(
-    filteredSupernodePastelIDs.map(async (supernodePastelID) => {
-      const supernode = supernodeListDF.find(
-        (node) => node.extKey === supernodePastelID
-      );
-      const distance = await calculateXORDistance(
-        inputPastelID,
-        supernodePastelID
-      );
-      return {
-        pastelID: supernodePastelID,
-        url: `http://${supernode.ipaddress_port.split(":")[0]}:7123`,
-        distance,
-      };
-    })
-  );
-  const sortedXorDistances = xorDistances.sort((a, b) => {
-    if (a.distance < b.distance) return -1;
-    if (a.distance > b.distance) return 1;
-    return 0;
-  });
-  const closestSupernodes = sortedXorDistances.slice(0, n);
-  return closestSupernodes.map(({ url, pastelID }) => ({ url, pastelID }));
+
+    if (filteredSupernodes.length === 0) {
+      logger.warn("No filtered supernodes available");
+      return [];
+    }
+
+    const xorDistances = await Promise.all(
+      filteredSupernodes.map(async (supernode) => {
+        try {
+          const distance = await calculateXORDistance(
+            inputPastelID,
+            supernode.pastelID
+          );
+          return { ...supernode, distance };
+        } catch (error) {
+          logger.error(
+            `Error calculating XOR distance for supernode ${supernode.pastelID}: ${error.message}`
+          );
+          return null;
+        }
+      })
+    );
+
+    const validXorDistances = xorDistances.filter(Boolean);
+
+    if (validXorDistances.length === 0) {
+      logger.warn("No valid XOR distances calculated");
+      return [];
+    }
+
+    const sortedXorDistances = validXorDistances.sort((a, b) => {
+      if (a.distance < b.distance) return -1;
+      if (a.distance > b.distance) return 1;
+      return 0;
+    });
+
+    const closestSupernodes = sortedXorDistances.slice(0, n);
+
+    const validSupernodePromises = closestSupernodes.map(
+      async ({ url, pastelID }) => {
+        try {
+          await axios.get(url, {
+            timeout: maxResponseTimeInMilliseconds,
+            validateStatus: function (status) {
+              return status >= 200 && status < 300; // Default
+            },
+          });
+          return { url, pastelID };
+        } catch (error) {
+          return null;
+        }
+      }
+    );
+
+    const validSupernodes = (await Promise.all(validSupernodePromises)).filter(
+      Boolean
+    );
+
+    if (validSupernodes.length === 0) {
+      logger.warn("No valid supernodes found after connectivity check");
+    } else {
+      logger.info(`Found ${validSupernodes.length} valid supernodes`);
+    }
+
+    return validSupernodes;
+  } catch (error) {
+    logger.error(
+      `Error in getNClosestSupernodesToPastelIDURLs: ${error.message}`
+    );
+    return [];
+  }
 }
 
 async function validateCreditPackTicketMessageData(modelInstance) {
@@ -962,19 +1120,56 @@ function validateInferenceData(inferenceResultDict, auditResults) {
   return validationResults;
 }
 
-async function filterSupernodesByPingResponseTimeAndPortResponse(
+async function filterSupernodes(
   supernodeList,
-  maxResponseTimeInMilliseconds = 800
+  maxResponseTimeInMilliseconds = 700,
+  minPerformanceRatio = 0.75,
+  maxSupernodes = 130,
+  totalTimeoutMs = 1100
 ) {
   const cacheKey = "filteredSupernodes";
-  const cacheExpiry = 3 * 60 * 1000; // 3 minutes in milliseconds
-  const currentTime = Date.now();
-  // Retrieve cached data
-  const cachedData = await supernodeCacheStorage.getItem(cacheKey);
-  if (cachedData && currentTime - cachedData.timestamp < cacheExpiry) {
-    return cachedData.filteredSupernodes;
+
+  const stats = {
+    totalProcessed: 0,
+    removedDueToPing: 0,
+    removedDueToPerformance: 0,
+    removedDueToError: 0,
+    timeouts: 0,
+  };
+
+  const logResults = () => {
+    let USE_VERBOSE_LOGGING = false;
+    const totalRemoved =
+      stats.removedDueToPing +
+      stats.removedDueToPerformance +
+      stats.removedDueToError;
+    const removedPercentage = (
+      (totalRemoved / stats.totalProcessed) *
+      100
+    ).toFixed(2);
+    if (USE_VERBOSE_LOGGING) {
+      logger.info(`Total supernodes processed: ${stats.totalProcessed}`);
+      logger.info(
+        `Total supernodes removed: ${totalRemoved} (${removedPercentage}%)`
+      );
+      logger.info(`- Removed due to ping: ${stats.removedDueToPing}`);
+      logger.info(
+        `- Removed due to performance: ${stats.removedDueToPerformance}`
+      );
+      logger.info(`- Removed due to errors: ${stats.removedDueToError}`);
+      if (stats.timeouts > 0) {
+        logger.info(`Total timeouts: ${stats.timeouts}`);
+      }
+    }
+  };
+
+  const cachedData = await getFromCache(cacheKey);
+
+  if (cachedData && cachedData.length >= maxSupernodes) {
+    logger.info("Returning cached supernodes.");
+    return cachedData.slice(0, maxSupernodes);
   }
-  // Fetch the full supernode list if only pastelIDs are provided
+
   let fullSupernodeList = supernodeList;
   if (typeof supernodeList[0] === "string") {
     const { validMasternodeListFullDF } = await checkSupernodeList();
@@ -982,37 +1177,307 @@ async function filterSupernodesByPingResponseTimeAndPortResponse(
       supernodeList.includes(supernode.extKey)
     );
   }
-  const pingResults = await Promise.all(
-    fullSupernodeList.map(async (supernode) => {
-      try {
-        const ipAddressPort = supernode.ipaddress_port;
-        if (!ipAddressPort) return null;
-        const ipAddress = ipAddressPort.split(":")[0];
-        const pingResponse = await ping.promise.probe(ipAddress, {
-          timeout: Math.ceil(maxResponseTimeInMilliseconds / 1000),
-        });
-        if (pingResponse.time > maxResponseTimeInMilliseconds) return null;
-        await axios.get(`http://${ipAddress}:7123`, {
-          timeout: maxResponseTimeInMilliseconds,
-        });
-        await axios.get(`http://${ipAddress}:8089`, {
-          timeout: maxResponseTimeInMilliseconds,
-        });
-        return supernode;
-      } catch (error) {
+
+  const filteredSupernodes = [];
+  let completed = false;
+  const { default: pLimit } = await import("p-limit");
+  const limit = pLimit(150);
+
+  const checkSupernode = async (supernode) => {
+    stats.totalProcessed++;
+    if (completed) return;
+    const cacheKey = `supernode_${supernode.extKey}`;
+    const cachedResult = await getFromCache(cacheKey);
+
+    if (cachedResult) return cachedResult;
+
+    try {
+      const ipAddressPort = supernode.ipaddress_port;
+      if (!ipAddressPort) return null;
+      const ipAddress = ipAddressPort.split(":")[0];
+      const pingResponse = await ping.promise.probe(ipAddress, {
+        timeout: Math.ceil(maxResponseTimeInMilliseconds / 1000),
+      });
+      if (pingResponse.time > maxResponseTimeInMilliseconds) {
+        stats.removedDueToPing++;
         return null;
       }
-    })
+      const performanceResponse = await axios.get(
+        `http://${ipAddress}:7123/liveness_ping`,
+        {
+          timeout: maxResponseTimeInMilliseconds,
+        }
+      );
+      if (
+        performanceResponse.data.performance_ratio_score < minPerformanceRatio
+      ) {
+        stats.removedDueToPerformance++;
+        return null;
+      }
+      const result = {
+        pastelID: supernode.extKey,
+        url: `http://${ipAddress}:7123`,
+      };
+      await storeInCache(cacheKey, result);
+      return result;
+    } catch (error) {
+      stats.removedDueToError++;
+      return null;
+    }
+  };
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => {
+      stats.timeouts++;
+      reject(new Error("Operation timed out"));
+    }, totalTimeoutMs)
   );
-  const filteredSupernodes = pingResults
-    .filter((result) => result !== null)
-    .map((supernode) => supernode.extKey);
-  // Update cache
-  await supernodeCacheStorage.setItem(cacheKey, {
-    timestamp: currentTime,
-    filteredSupernodes,
+
+  try {
+    await Promise.race([
+      timeoutPromise,
+      Promise.all(
+        fullSupernodeList.map((supernode) =>
+          limit(() =>
+            checkSupernode(supernode).then((result) => {
+              if (result) {
+                filteredSupernodes.push(result);
+                if (filteredSupernodes.length >= maxSupernodes) {
+                  completed = true;
+                }
+              }
+            })
+          )
+        )
+      ),
+    ]);
+  } catch (error) {
+    if (error.message !== "Operation timed out") {
+      throw error;
+    }
+  }
+
+  await storeInCache(cacheKey, filteredSupernodes);
+  logResults();
+  return filteredSupernodes.slice(0, maxSupernodes);
+}
+
+async function waitForConfirmation(checkFunction, ...checkFunctionArgs) {
+  const options = {
+    maxRetries: 30,
+    retryDelay: 10000,
+    actionName: "condition",
+    ...(typeof checkFunctionArgs[checkFunctionArgs.length - 1] === "object"
+      ? checkFunctionArgs.pop()
+      : {}),
+  };
+
+  for (let attempt = 1; attempt <= options.maxRetries; attempt++) {
+    try {
+      const result = await checkFunction(...checkFunctionArgs);
+      if (result) {
+        logger.info(
+          `${options.actionName} confirmed after ${attempt} attempt(s).`
+        );
+        return true;
+      }
+    } catch (error) {
+      logger.warn(
+        `Error checking ${options.actionName} (attempt ${attempt}/${options.maxRetries}): ${error.message}`
+      );
+    }
+
+    if (attempt < options.maxRetries) {
+      logger.info(
+        `${options.actionName} not yet confirmed. Attempt ${attempt}/${
+          options.maxRetries
+        }. Waiting ${options.retryDelay / 1000} seconds before next check...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, options.retryDelay));
+    }
+  }
+
+  logger.warn(
+    `${options.actionName} not confirmed after ${options.maxRetries} attempts.`
+  );
+  return false;
+}
+
+async function waitForPastelIDRegistration(pastelID) {
+  const isRegistered = await waitForConfirmation(
+    isPastelIDRegistered,
+    pastelID,
+    {
+      maxRetries: 20,
+      retryDelay: 15000,
+      actionName: "PastelID registration",
+    }
+  );
+
+  if (isRegistered) {
+    logger.info(`PastelID ${pastelID} has been successfully registered.`);
+  } else {
+    logger.error(`PastelID ${pastelID} registration could not be confirmed.`);
+  }
+
+  return isRegistered;
+}
+
+async function waitForCreditPackConfirmation(txid) {
+  const isConfirmed = await waitForConfirmation(isCreditPackConfirmed, txid, {
+    maxRetries: 40,
+    retryDelay: 20000,
+    actionName: "Credit pack confirmation",
   });
-  return filteredSupernodes;
+
+  if (isConfirmed) {
+    logger.info(`Credit pack with TXID ${txid} has been confirmed.`);
+  } else {
+    logger.error(`Credit pack with TXID ${txid} could not be confirmed.`);
+  }
+
+  return isConfirmed;
+}
+
+async function importPromotionalPack(jsonFilePath) {
+  logger.info(`Starting import of promotional pack from file: ${jsonFilePath}`);
+  const processedPacks = [];
+
+  try {
+    // Initialize RPC connection
+    logger.info("Initializing RPC connection...");
+    await initializeRPCConnection();
+    logger.info("RPC connection initialized successfully");
+
+    // Read and parse the JSON file
+    const jsonContent = fs.readFileSync(jsonFilePath, "utf8");
+    let packData = JSON.parse(jsonContent);
+
+    // Process each promotional pack in the file
+    if (!Array.isArray(packData)) {
+      packData = [packData]; // Wrap it in an array if it's not already
+    }
+
+    for (let i = 0; i < packData.length; i++) {
+      const pack = packData[i];
+      logger.info(`Processing pack ${i + 1} of ${packData.length}`);
+
+      // 1. Save the PastelID secure container file
+      const { rpcport } = await getLocalRPCSettings();
+      const network =
+        rpcport === "9932"
+          ? "mainnet"
+          : rpcport === "19932"
+          ? "testnet"
+          : "devnet";
+      const pastelIDDir = getPastelIDDirectory(network);
+      const secureContainerPath = path.join(pastelIDDir, pack.pastel_id_pubkey);
+
+      logger.info(
+        `Saving PastelID secure container to: ${secureContainerPath}`
+      );
+      fs.writeFileSync(
+        secureContainerPath,
+        Buffer.from(pack.secureContainerBase64, "base64")
+      );
+
+      // 2. Import the tracking address private key
+      logger.info(
+        `Importing private key for tracking address: ${pack.psl_credit_usage_tracking_address}`
+      );
+
+      const startingBlockHeight = 730000;
+      const importResult = await importPrivKey(
+        pack.psl_credit_usage_tracking_address_private_key,
+        "Imported from promotional pack",
+        true,
+        startingBlockHeight
+      );
+      if (importResult) {
+        logger.info(
+          `Private key imported successfully for tracking address: ${importResult}`
+        );
+      } else {
+        logger.warn("Failed to import private key");
+      }
+
+      // 3. Log other important information
+      logger.info(`PastelID: ${pack.pastel_id_pubkey}`);
+      logger.info(`Passphrase: ${pack.pastel_id_passphrase}`);
+      logger.info(`Credit Pack Ticket: ${JSON.stringify(pack, null, 2)}`);
+
+      // Add the processed pack info to our array
+      processedPacks.push({
+        pub_key: pack.pastel_id_pubkey,
+        passphrase: pack.pastel_id_passphrase,
+      });
+
+      logger.info(`Pack ${i + 1} processed successfully`);
+    }
+
+    // Wait for RPC connection to be re-established
+    await waitForRPCConnection();
+
+    // Verify PastelID import and wait for blockchain confirmation
+    for (let i = 0; i < packData.length; i++) {
+      const pack = packData[i];
+      logger.info(`Verifying PastelID import for pack ${i + 1}`);
+
+      try {
+        // Wait for PastelID to be confirmed in the blockchain
+        await waitForPastelIDRegistration(pack.pastel_id_pubkey);
+        logger.info(
+          `PastelID ${pack.pastel_id_pubkey} confirmed in blockchain`
+        );
+
+        // Verify PastelID functionality
+        const testMessage = "This is a test message for PastelID verification";
+        const signature = await signMessageWithPastelID(
+          pack.pastel_id_pubkey,
+          testMessage,
+          pack.pastel_id_passphrase
+        );
+        logger.info(
+          `Signature created successfully for PastelID: ${pack.pastel_id_pubkey}`
+        );
+
+        const verificationResult = await verifyMessageWithPastelID(
+          pack.pastel_id_pubkey,
+          testMessage,
+          signature
+        );
+
+        if (verificationResult) {
+          logger.info(
+            `PastelID ${pack.pastel_id_pubkey} verified successfully`
+          );
+        } else {
+          logger.warn(`PastelID ${pack.pastel_id_pubkey} verification failed`);
+        }
+
+        // Verify Credit Pack Ticket
+        await waitForCreditPackConfirmation(pack.credit_pack_registration_txid);
+        logger.info(
+          `Credit Pack Ticket ${pack.credit_pack_registration_txid} confirmed in blockchain`
+        );
+      } catch (error) {
+        logger.error(`Error verifying pack ${i + 1}: ${error.message}`);
+      }
+    }
+
+    logger.info("All promo packs in the file have been processed and verified");
+    return {
+      success: true,
+      message: "Promotional pack(s) imported and verified successfully",
+      processedPacks: processedPacks,
+    };
+  } catch (error) {
+    logger.error(`Error importing promotional pack: ${error.message}`);
+    return {
+      success: false,
+      message: `Failed to import promotional pack: ${error.message}`,
+    };
+  }
 }
 
 module.exports = {
@@ -1036,6 +1501,7 @@ module.exports = {
   validatePastelBlockHeightFields,
   validateHashFields,
   validatePastelIDSignatureFields,
+  filterSupernodes,
   getClosestSupernodePastelIDFromList,
   checkIfPastelIDIsValid,
   getSupernodeUrlFromPastelID,
@@ -1045,6 +1511,6 @@ module.exports = {
   validateInferenceResponseFields,
   validateInferenceResultFields,
   validateInferenceData,
-  filterSupernodesByPingResponseTimeAndPortResponse,
   logger,
+  importPromotionalPack,
 };

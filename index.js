@@ -26,6 +26,7 @@ async function main() {
   } else if (rpcport === "29932") {
     burnAddress = "44oUgmZSL997veFEQDq569wv5tsT6KXf9QY7";
   }
+  const globals = require("./globals");
 
   const useTestMessagingFunctionality = false;
   const useTestCreditPackTicketFunctionality = false;
@@ -61,7 +62,7 @@ async function main() {
   }
 
   if (useTestCreditPackTicketFunctionality && !creditPackTicketPastelTxid) {
-    const desiredNumberOfCredits = 1500;
+    const desiredNumberOfCredits = 250;
     const amountOfPSLForTrackingTransactions = 10.0;
     const creditPriceCushionPercentage = 0.15;
     const maximumTotalAmountOfPSLToFundInNewTrackingAddress = 150000.0;
@@ -328,7 +329,12 @@ async function main() {
 }
 
 main().catch((error) => {
-  logger.error(`Error in main function: ${error.message}`);
+  logger.error(
+    `Error in main function: ${error.message.slice(
+      0,
+      globals.MAX_CHARACTERS_TO_DISPLAY_IN_ERROR_MESSAGE
+    )}`
+  );
   process.exit(1);
 });
 
