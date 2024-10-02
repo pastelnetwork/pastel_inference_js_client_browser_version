@@ -1,4 +1,4 @@
-// browser_utils.js
+// utility_functions_browser_replacements.js
 
 import { BrowserRPCReplacement } from './BrowserRPCReplacement.js';
 import { BrowserDatabase } from './BrowserDatabase.js';
@@ -683,18 +683,280 @@ async function prepareModelForEndpoint(modelInstance) {
     return validationErrors;
   }
   
-  function validateInferenceResponseFields(responseAuditResults, usageRequestResponse) {
-    // ... (implementation remains the same)
+
+  function validateInferenceResponseFields(
+    responseAuditResults,
+    usageRequestResponse
+  ) {
+    const inferenceResponseIDCounts = {};
+    const inferenceRequestIDCounts = {};
+    const proposedCostInCreditsCounts = {};
+    const remainingCreditsAfterRequestCounts = {};
+    const creditUsageTrackingPSLAddressCounts = {};
+    const requestConfirmationMessageAmountInPatoshisCounts = {};
+    const maxBlockHeightToIncludeConfirmationTransactionCounts = {};
+    const supernodePastelIDAndSignatureOnInferenceResponseIDCounts = {};
+  
+    for (const result of responseAuditResults) {
+      inferenceResponseIDCounts[result.inference_response_id] =
+        (inferenceResponseIDCounts[result.inference_response_id] || 0) + 1;
+      inferenceRequestIDCounts[result.inference_request_id] =
+        (inferenceRequestIDCounts[result.inference_request_id] || 0) + 1;
+      proposedCostInCreditsCounts[
+        result.proposed_cost_of_request_in_inference_credits
+      ] =
+        (proposedCostInCreditsCounts[
+          result.proposed_cost_of_request_in_inference_credits
+        ] || 0) + 1;
+      remainingCreditsAfterRequestCounts[
+        result.remaining_credits_in_pack_after_request_processed
+      ] =
+        (remainingCreditsAfterRequestCounts[
+          result.remaining_credits_in_pack_after_request_processed
+        ] || 0) + 1;
+      creditUsageTrackingPSLAddressCounts[
+        result.credit_usage_tracking_psl_address
+      ] =
+        (creditUsageTrackingPSLAddressCounts[
+          result.credit_usage_tracking_psl_address
+        ] || 0) + 1;
+      requestConfirmationMessageAmountInPatoshisCounts[
+        result.request_confirmation_message_amount_in_patoshis
+      ] =
+        (requestConfirmationMessageAmountInPatoshisCounts[
+          result.request_confirmation_message_amount_in_patoshis
+        ] || 0) + 1;
+      maxBlockHeightToIncludeConfirmationTransactionCounts[
+        result.max_block_height_to_include_confirmation_transaction
+      ] =
+        (maxBlockHeightToIncludeConfirmationTransactionCounts[
+          result.max_block_height_to_include_confirmation_transaction
+        ] || 0) + 1;
+      supernodePastelIDAndSignatureOnInferenceResponseIDCounts[
+        result.supernode_pastelid_and_signature_on_inference_request_response_hash
+      ] =
+        (supernodePastelIDAndSignatureOnInferenceResponseIDCounts[
+          result
+            .supernode_pastelid_and_signature_on_inference_request_response_hash
+        ] || 0) + 1;
+    }
+  
+    const majorityInferenceResponseID = Object.keys(
+      inferenceResponseIDCounts
+    ).reduce((a, b) =>
+      inferenceResponseIDCounts[a] > inferenceResponseIDCounts[b] ? a : b
+    );
+    const majorityInferenceRequestID = Object.keys(
+      inferenceRequestIDCounts
+    ).reduce((a, b) =>
+      inferenceRequestIDCounts[a] > inferenceRequestIDCounts[b] ? a : b
+    );
+    const majorityProposedCostInCredits = Object.keys(
+      proposedCostInCreditsCounts
+    ).reduce((a, b) =>
+      proposedCostInCreditsCounts[a] > proposedCostInCreditsCounts[b] ? a : b
+    );
+    const majorityRemainingCreditsAfterRequest = Object.keys(
+      remainingCreditsAfterRequestCounts
+    ).reduce((a, b) =>
+      remainingCreditsAfterRequestCounts[a] >
+        remainingCreditsAfterRequestCounts[b]
+        ? a
+        : b
+    );
+    const majorityCreditUsageTrackingPSLAddress = Object.keys(
+      creditUsageTrackingPSLAddressCounts
+    ).reduce((a, b) =>
+      creditUsageTrackingPSLAddressCounts[a] >
+        creditUsageTrackingPSLAddressCounts[b]
+        ? a
+        : b
+    );
+    const majorityRequestConfirmationMessageAmountInPatoshis = Object.keys(
+      requestConfirmationMessageAmountInPatoshisCounts
+    ).reduce((a, b) =>
+      requestConfirmationMessageAmountInPatoshisCounts[a] >
+        requestConfirmationMessageAmountInPatoshisCounts[b]
+        ? a
+        : b
+    );
+    const majorityMaxBlockHeightToIncludeConfirmationTransaction = Object.keys(
+      maxBlockHeightToIncludeConfirmationTransactionCounts
+    ).reduce((a, b) =>
+      maxBlockHeightToIncludeConfirmationTransactionCounts[a] >
+        maxBlockHeightToIncludeConfirmationTransactionCounts[b]
+        ? a
+        : b
+    );
+    const majoritySupernodePastelIDAndSignatureOnInferenceResponseID =
+      Object.keys(
+        supernodePastelIDAndSignatureOnInferenceResponseIDCounts
+      ).reduce((a, b) =>
+        supernodePastelIDAndSignatureOnInferenceResponseIDCounts[a] >
+          supernodePastelIDAndSignatureOnInferenceResponseIDCounts[b]
+          ? a
+          : b
+      );
+  
+    const validationResults = {
+      inference_response_id:
+        majorityInferenceResponseID ===
+        usageRequestResponse.inference_response_id,
+      inference_request_id:
+        majorityInferenceRequestID === usageRequestResponse.inference_request_id,
+      proposed_cost_in_credits:
+        majorityProposedCostInCredits ===
+        usageRequestResponse.proposed_cost_of_request_in_inference_credits,
+      remaining_credits_after_request:
+        majorityRemainingCreditsAfterRequest ===
+        usageRequestResponse.remaining_credits_in_pack_after_request_processed,
+      credit_usage_tracking_psl_address:
+        majorityCreditUsageTrackingPSLAddress ===
+        usageRequestResponse.credit_usage_tracking_psl_address,
+      request_confirmation_message_amount_in_patoshis:
+        majorityRequestConfirmationMessageAmountInPatoshis ===
+        usageRequestResponse.request_confirmation_message_amount_in_patoshis,
+      max_block_height_to_include_confirmation_transaction:
+        majorityMaxBlockHeightToIncludeConfirmationTransaction ===
+        usageRequestResponse.max_block_height_to_include_confirmation_transaction,
+      supernode_pastelid_and_signature_on_inference_response_id:
+        majoritySupernodePastelIDAndSignatureOnInferenceResponseID ===
+        usageRequestResponse.supernode_pastelid_and_signature_on_inference_request_response_hash,
+    };
+  
+    return validationResults;
   }
   
   function validateInferenceResultFields(resultAuditResults, usageResult) {
-    // ... (implementation remains the same)
+    const inferenceResultIDCounts = {};
+    const inferenceRequestIDCounts = {};
+    const inferenceResponseIDCounts = {};
+    const respondingSupernodePastelIDCounts = {};
+    const inferenceResultJSONBase64Counts = {};
+    const inferenceResultFileTypeStringsCounts = {};
+    const respondingSupernodeSignatureOnInferenceResultIDCounts = {};
+  
+    for (const result of resultAuditResults) {
+      inferenceResultIDCounts[result.inference_result_id] =
+        (inferenceResultIDCounts[result.inference_result_id] || 0) + 1;
+      inferenceRequestIDCounts[result.inference_request_id] =
+        (inferenceRequestIDCounts[result.inference_request_id] || 0) + 1;
+      inferenceResponseIDCounts[result.inference_response_id] =
+        (inferenceResponseIDCounts[result.inference_response_id] || 0) + 1;
+      respondingSupernodePastelIDCounts[result.responding_supernode_pastelid] =
+        (respondingSupernodePastelIDCounts[
+          result.responding_supernode_pastelid
+        ] || 0) + 1;
+      inferenceResultJSONBase64Counts[
+        result.inference_result_json_base64.slice(0, 32)
+      ] =
+        (inferenceResultJSONBase64Counts[
+          result.inference_result_json_base64.slice(0, 32)
+        ] || 0) + 1;
+      inferenceResultFileTypeStringsCounts[
+        result.inference_result_file_type_strings
+      ] =
+        (inferenceResultFileTypeStringsCounts[
+          result.inference_result_file_type_strings
+        ] || 0) + 1;
+      respondingSupernodeSignatureOnInferenceResultIDCounts[
+        result.responding_supernode_signature_on_inference_result_id
+      ] =
+        (respondingSupernodeSignatureOnInferenceResultIDCounts[
+          result.responding_supernode_signature_on_inference_result_id
+        ] || 0) + 1;
+    }
+  
+    const majorityInferenceResultID = Object.keys(inferenceResultIDCounts).reduce(
+      (a, b) => (inferenceResultIDCounts[a] > inferenceResultIDCounts[b] ? a : b)
+    );
+    const majorityInferenceRequestID = Object.keys(
+      inferenceRequestIDCounts
+    ).reduce((a, b) =>
+      inferenceRequestIDCounts[a] > inferenceRequestIDCounts[b] ? a : b
+    );
+    const majorityInferenceResponseID = Object.keys(
+      inferenceResponseIDCounts
+    ).reduce((a, b) =>
+      inferenceResponseIDCounts[a] > inferenceResponseIDCounts[b] ? a : b
+    );
+    const majorityRespondingSupernodePastelID = Object.keys(
+      respondingSupernodePastelIDCounts
+    ).reduce((a, b) =>
+      respondingSupernodePastelIDCounts[a] > respondingSupernodePastelIDCounts[b]
+        ? a
+        : b
+    );
+    const majorityInferenceResultJSONBase64 = Object.keys(
+      inferenceResultJSONBase64Counts
+    ).reduce((a, b) =>
+      inferenceResultJSONBase64Counts[a] > inferenceResultJSONBase64Counts[b]
+        ? a
+        : b
+    );
+    const majorityInferenceResultFileTypeStrings = Object.keys(
+      inferenceResultFileTypeStringsCounts
+    ).reduce((a, b) =>
+      inferenceResultFileTypeStringsCounts[a] >
+        inferenceResultFileTypeStringsCounts[b]
+        ? a
+        : b
+    );
+    const majorityRespondingSupernodeSignatureOnInferenceResultID = Object.keys(
+      respondingSupernodeSignatureOnInferenceResultIDCounts
+    ).reduce((a, b) =>
+      respondingSupernodeSignatureOnInferenceResultIDCounts[a] >
+        respondingSupernodeSignatureOnInferenceResultIDCounts[b]
+        ? a
+        : b
+    );
+  
+    const validationResults = {
+      inference_result_id:
+        majorityInferenceResultID === usageResult.inference_result_id,
+      inference_request_id:
+        majorityInferenceRequestID === usageResult.inference_request_id,
+      inference_response_id:
+        majorityInferenceResponseID === usageResult.inference_response_id,
+      responding_supernode_pastelid:
+        majorityRespondingSupernodePastelID ===
+        usageResult.responding_supernode_pastelid,
+      inference_result_json_base64:
+        majorityInferenceResultJSONBase64 ===
+        usageResult.inference_result_json_base64.slice(0, 32),
+      inference_result_file_type_strings:
+        majorityInferenceResultFileTypeStrings ===
+        usageResult.inference_result_file_type_strings,
+      responding_supernode_signature_on_inference_result_id:
+        majorityRespondingSupernodeSignatureOnInferenceResultID ===
+        usageResult.responding_supernode_signature_on_inference_result_id,
+    };
+  
+    return validationResults;
   }
   
   function validateInferenceData(inferenceResultDict, auditResults) {
-    // ... (implementation remains the same)
-  }
+    const usageRequestResponse = inferenceResultDict.usage_request_response;
+    const usageResult = inferenceResultDict.output_results;
   
+    const responseValidationResults = validateInferenceResponseFields(
+      auditResults.filter((result) => result.inference_response_id),
+      usageRequestResponse
+    );
+  
+    const resultValidationResults = validateInferenceResultFields(
+      auditResults.filter((result) => result.inference_result_id),
+      usageResult
+    );
+  
+    const validationResults = {
+      response_validation: responseValidationResults,
+      result_validation: resultValidationResults,
+    };
+  
+    return validationResults;
+  }
+
   async function filterSupernodes(supernodeList, maxResponseTimeInMilliseconds = 700, minPerformanceRatio = 0.75, maxSupernodes = 130, totalTimeoutMs = 1100) {
     const cacheKey = "filteredSupernodes";
   
