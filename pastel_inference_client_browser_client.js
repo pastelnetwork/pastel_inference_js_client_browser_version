@@ -1,3 +1,48 @@
+// browser_pastel_inference_client.js
+
+import { BrowserRPCReplacement } from "./BrowserRPCReplacement.js";
+import { BrowserDatabase } from "./BrowserDatabase.js";
+import * as storage from "./storage_browser_client.js";
+import * as utils from "./utility_functions_browser_replacements.js";
+import * as schemas from "./validation_schemas_browser_client.js";
+
+const rpc = new BrowserRPCReplacement();
+const db = new BrowserDatabase();
+
+// Simulating the logger functionality
+const logger = {
+  info: (message) => console.log(`[INFO] ${message}`),
+  warn: (message) => console.warn(`[WARN] ${message}`),
+  error: (message) => console.error(`[ERROR] ${message}`),
+};
+
+// Constants
+const TARGET_VALUE_PER_CREDIT_IN_USD = parseFloat(
+  localStorage.getItem("TARGET_VALUE_PER_CREDIT_IN_USD") || "0.01"
+);
+const TARGET_PROFIT_MARGIN = parseFloat(
+  localStorage.getItem("TARGET_PROFIT_MARGIN") || "0.1"
+);
+const MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING =
+  parseFloat(
+    localStorage.getItem(
+      "MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING"
+    ) || "0.001"
+  );
+const MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS = parseInt(
+  localStorage.getItem(
+    "MAXIMUM_LOCAL_PASTEL_BLOCK_HEIGHT_DIFFERENCE_IN_BLOCKS"
+  ) || "10"
+);
+const MESSAGING_TIMEOUT_IN_SECONDS = parseInt(
+  localStorage.getItem("MESSAGING_TIMEOUT_IN_SECONDS") || "30"
+);
+
+function getIsoStringWithMicroseconds() {
+  const now = new Date();
+  return now.toISOString().replace("Z", "+00:00").replace(/\s/g, "");
+}
+
 class PastelInferenceClient {
   constructor(pastelID, passphrase) {
     this.pastelID = pastelID;
@@ -6,11 +51,13 @@ class PastelInferenceClient {
 
   async requestAndSignChallenge(supernodeURL) {
     try {
-      const response = await axios.get(
+      const response = await fetch(
         `${supernodeURL}/request_challenge/${this.pastelID}`
       );
-      const { challenge, challenge_id } = response.data;
-      const challenge_signature = await signMessageWithPastelID(
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const { challenge, challenge_id } = await response.json();
+      const challenge_signature = await rpc.signMessageWithPastelID(
         this.pastelID,
         challenge,
         this.passphrase
@@ -22,7 +69,7 @@ class PastelInferenceClient {
       };
     } catch (error) {
       logger.error(
-        `Error requesting and signing challenge: ${safeStringify(
+        `Error requesting and signing challenge: ${utils.safeStringify(
           error.message
         )}`
       );
@@ -30,110 +77,38 @@ class PastelInferenceClient {
     }
   }
 
-  async getCreditPackTicketFromTxid(supernodeURL, txid) {
+  async sendUserMessage(supernodeURL, userMessage) {
     try {
+      const { error } = await schemas.userMessageSchema.validate(userMessage);
+      if (error) {
+        throw new Error(`Invalid user message: ${error.message}`);
+      }
       const { challenge, challenge_id, challenge_signature } =
         await this.requestAndSignChallenge(supernodeURL);
-      const params = {
-        txid,
-        pastelid: this.pastelID,
-        challenge,
-        challenge_id,
-        challenge_signature,
-      };
-      logActionWithPayload(
-        "retrieving",
-        "credit pack ticket from txid",
-        params
-      );
 
-      const response = await axios.get(
-        `${supernodeURL}/get_credit_pack_ticket_from_txid`,
-        {
-          params,
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-
-      if (response.status !== 200) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-
-      const {
-        credit_pack_purchase_request_response,
-        credit_pack_purchase_request_confirmation,
-      } = response.data;
-
-      logActionWithPayload("received", "credit pack ticket from Supernode", {
-        credit_pack_purchase_request_response,
-        credit_pack_purchase_request_confirmation,
+      const payload = userMessage;
+      const response = await fetch(`${supernodeURL}/send_user_message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_message: payload,
+          challenge,
+          challenge_id,
+          challenge_signature,
+        }),
       });
-
-      const { errorRequestResponse, value: validatedRequestResponse } =
-        creditPackPurchaseRequestResponseSchema.validate(
-          credit_pack_purchase_request_response
-        );
-      if (errorRequestResponse) {
-        throw new Error(
-          `Invalid credit pack request response: ${errorRequestResponse.message}`
-        );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      const { resultError, value: validatedResult } =
+        await schemas.userMessageSchema.validate(result);
+      if (resultError) {
+        throw new Error(`Invalid user message: ${resultError.message}`);
       }
-      const { errorRequestConfirmation, value: validatedRequestConfirmation } =
-        creditPackPurchaseRequestConfirmationSchema.validate(
-          credit_pack_purchase_request_confirmation
-        );
-      if (errorRequestConfirmation) {
-        throw new Error(
-          `Invalid credit pack request confirmation: ${errorRequestConfirmation.message}`
-        );
-      }
-      return {
-        creditPackPurchaseRequestResponse: 
-          CreditPackPurchaseRequestResponse.put(validatedRequestResponse),
-        creditPackPurchaseRequestConfirmation:
-          CreditPackPurchaseRequestConfirmation.put(
-            validatedRequestConfirmation
-          ),
-      };
+      await db.addData("UserMessage", validatedResult);
+      return validatedResult;
     } catch (error) {
-      logger.error(
-        `Error retrieving credit pack ticket from txid: ${error.message}`
-      );
-      throw error;
-    }
-  }
-
-  async internalEstimateOfCreditPackTicketCostInPSL(
-    desiredNumberOfCredits,
-    priceCushionPercentage
-  ) {
-    const estimatedPricePerCredit =
-      await estimatedMarketPriceOfInferenceCreditsInPSLTerms();
-    const estimatedTotalCostOfTicket =
-      Math.round(
-        desiredNumberOfCredits *
-          estimatedPricePerCredit *
-          (1 + priceCushionPercentage) *
-          100
-      ) / 100;
-    return estimatedTotalCostOfTicket;
-  }
-
-  async getModelMenu(supernodeURL) {
-    try {
-      const response = await axios.get(
-        `${supernodeURL}/get_inference_model_menu`,
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-      return response.data;
-    } catch (error) {
-      logger.error(
-        `Error fetching model menu from Supernode URL: ${supernodeURL}: ${safeStringify(
-          error
-        )}`
-      );
+      logger.error(`Error sending user message: ${error.message}`);
       throw error;
     }
   }
@@ -142,27 +117,193 @@ class PastelInferenceClient {
     try {
       const { challenge, challenge_id, challenge_signature } =
         await this.requestAndSignChallenge(supernodeURL);
-      const params = {
+      const params = new URLSearchParams({
+        pastelid: this.pastelID,
+        challenge,
+        challenge_id,
+        challenge_signature,
+      });
+      const response = await fetch(
+        `${supernodeURL}/get_user_messages?${params}`
+      );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      const validatedResults = await Promise.all(
+        result.map((messageData) =>
+          schemas.userMessageSchema.validate(messageData)
+        )
+      );
+      await Promise.all(
+        validatedResults.map((message) => db.addData("UserMessage", message))
+      );
+      return validatedResults;
+    } catch (error) {
+      logger.error(`Error retrieving user messages: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getModelMenu() {
+    const minimumNumberOfResponses = 5;
+    const retryLimit = 1;
+    try {
+      const { validMasternodeListFullDF } = await rpc.checkSupernodeList();
+      const closestSupernodes = await utils.getNClosestSupernodesToPastelIDURLs(
+        60,
+        this.pastelID,
+        validMasternodeListFullDF
+      );
+      let validResponses = [];
+
+      await new Promise((resolve, reject) => {
+        let completedRequests = 0;
+        closestSupernodes.forEach(({ url }) => {
+          this.retryPromise(
+            () => this.getModelMenuFromSupernode(url),
+            retryLimit
+          )
+            .then((response) => {
+              logger.info(
+                `Successful model menu response received from supernode at ${url}`
+              );
+              validResponses.push({ response, url });
+              if (validResponses.length >= minimumNumberOfResponses) {
+                resolve();
+              }
+            })
+            .catch((error) => {
+              logger.error(
+                `Error querying supernode at ${url}: ${error.message}`
+              );
+              completedRequests++;
+              if (
+                completedRequests >
+                closestSupernodes.length -
+                  minimumNumberOfResponses +
+                  validResponses.length
+              ) {
+                reject(
+                  new Error(
+                    "Insufficient valid responses received from supernodes"
+                  )
+                );
+              }
+            });
+        });
+      });
+
+      const largestResponse = validResponses.reduce((prev, current) => {
+        return JSON.stringify(current.response).length >
+          JSON.stringify(prev.response).length
+          ? current
+          : prev;
+      }).response;
+
+      return largestResponse;
+    } catch (error) {
+      logger.error(`Error in getModelMenu: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getModelMenuFromSupernode(supernodeURL) {
+    try {
+      const response = await fetch(`${supernodeURL}/get_inference_model_menu`);
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async retryPromise(promiseFunc, limit, count = 0) {
+    try {
+      return await promiseFunc();
+    } catch (error) {
+      if (count < limit) {
+        return this.retryPromise(promiseFunc, limit, count + 1);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  async getValidCreditPackTicketsForPastelID(supernodeURL) {
+    const useVerbose = false;
+    try {
+      if (!this.pastelID) {
+        return [];
+      }
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const payload = {
         pastelid: this.pastelID,
         challenge,
         challenge_id,
         challenge_signature,
       };
-      const response = await axios.get(`${supernodeURL}/get_user_messages`, {
-        params,
-        timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-      });
-      const result = response.data;
-      const validatedResults = await Promise.all(
-        result.map((messageData) => userMessageSchema.validate(messageData))
+      if (useVerbose) {
+        utils.logActionWithPayload(
+          "retrieving",
+          "valid credit pack tickets for PastelID",
+          payload
+        );
+      }
+      const response = await fetch(
+        `${supernodeURL}/get_valid_credit_pack_tickets_for_pastelid`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
       );
-      const userMessageInstances = await UserMessage.put(
-        validatedResults
-      );
-      return userMessageInstances;
+      if (!response.ok) {
+        if (useVerbose) {
+          throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return [];
+      }
+      const validCreditPackTickets = await response.json();
+      if (useVerbose && validCreditPackTickets.length) {
+        logger.info(
+          `Received ${validCreditPackTickets.length} valid credit pack tickets for PastelID ${this.pastelID}`
+        );
+      }
+
+      const processedTickets = validCreditPackTickets.map((ticket) => ({
+        credit_pack_registration_txid: ticket.credit_pack_registration_txid,
+        credit_purchase_request_confirmation_pastel_block_height:
+          ticket.credit_purchase_request_confirmation_pastel_block_height,
+        requesting_end_user_pastelid: ticket.requesting_end_user_pastelid,
+        ticket_input_data_fully_parsed_sha3_256_hash:
+          ticket.ticket_input_data_fully_parsed_sha3_256_hash,
+        txid_of_credit_purchase_burn_transaction:
+          ticket.txid_of_credit_purchase_burn_transaction,
+        credit_usage_tracking_psl_address:
+          ticket.credit_usage_tracking_psl_address,
+        psl_cost_per_credit: ticket.psl_cost_per_credit,
+        requested_initial_credits_in_credit_pack:
+          ticket.requested_initial_credits_in_credit_pack,
+        credit_pack_current_credit_balance:
+          ticket.credit_pack_current_credit_balance,
+        balance_as_of_datetime: ticket.balance_as_of_datetime,
+        number_of_confirmation_transactions:
+          ticket.number_of_confirmation_transactions,
+      }));
+
+      return processedTickets;
     } catch (error) {
-      logger.error(`Error retrieving user messages: ${error.message}`);
-      throw error;
+      if (useVerbose) {
+        logger.error(
+          `Error retrieving valid credit pack tickets for PastelID: ${error.message}`
+        );
+      }
+      if (useVerbose) {
+        throw error;
+      }
+      return [];
     }
   }
 
@@ -176,21 +317,22 @@ class PastelInferenceClient {
         challenge_id,
         challenge_signature,
       };
-      logActionWithPayload("checking", "credit pack balance", payload);
+      utils.logActionWithPayload("checking", "credit pack balance", payload);
 
-      const response = await axios.post(
+      const response = await fetch(
         `${supernodeURL}/check_credit_pack_balance`,
-        payload,
         {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
         }
       );
 
-      if (response.status !== 200) {
+      if (!response.ok) {
         throw new Error(`HTTP error! Status: ${response.status}`);
       }
 
-      const balanceInfo = response.data;
+      const balanceInfo = await response.json();
       logger.info(
         `Received credit pack balance info for txid ${txid}: ${JSON.stringify(
           balanceInfo
@@ -205,71 +347,143 @@ class PastelInferenceClient {
     }
   }
 
+  async getCreditPackTicketFromTxid(supernodeURL, txid) {
+    try {
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const params = new URLSearchParams({
+        txid,
+        pastelid: this.pastelID,
+        challenge,
+        challenge_id,
+        challenge_signature,
+      });
+      utils.logActionWithPayload(
+        "retrieving",
+        "credit pack ticket from txid",
+        params
+      );
+
+      const response = await fetch(
+        `${supernodeURL}/get_credit_pack_ticket_from_txid?${params}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+
+      const {
+        credit_pack_purchase_request_response,
+        credit_pack_purchase_request_confirmation,
+      } = await response.json();
+
+      utils.logActionWithPayload(
+        "received",
+        "credit pack ticket from Supernode",
+        {
+          credit_pack_purchase_request_response,
+          credit_pack_purchase_request_confirmation,
+        }
+      );
+
+      const { errorRequestResponse, value: validatedRequestResponse } =
+        await schemas.creditPackPurchaseRequestResponseSchema.validate(
+          credit_pack_purchase_request_response
+        );
+      if (errorRequestResponse) {
+        throw new Error(
+          `Invalid credit pack request response: ${errorRequestResponse.message}`
+        );
+      }
+      const { errorRequestConfirmation, value: validatedRequestConfirmation } =
+        await schemas.creditPackPurchaseRequestConfirmationSchema.validate(
+          credit_pack_purchase_request_confirmation
+        );
+      if (errorRequestConfirmation) {
+        throw new Error(
+          `Invalid credit pack request confirmation: ${errorRequestConfirmation.message}`
+        );
+      }
+      return {
+        creditPackPurchaseRequestResponse: validatedRequestResponse,
+        creditPackPurchaseRequestConfirmation: validatedRequestConfirmation,
+      };
+    } catch (error) {
+      logger.error(
+        `Error retrieving credit pack ticket from txid: ${error.message}`
+      );
+      throw error;
+    }
+  }
+
   async creditPackTicketInitialPurchaseRequest(
     supernodeURL,
     creditPackRequest
   ) {
     try {
-      // Validate the credit pack request using Joi
       const { error, value: validatedCreditPackRequest } =
-      creditPackPurchaseRequestSchema.validate(creditPackRequest.toJSON());
+        await schemas.creditPackPurchaseRequestSchema.validate(
+          creditPackRequest
+        );
       if (error) {
         throw new Error(`Invalid credit pack request: ${error.message}`);
       }
-      // Create the credit pack purchase request in the database
-      await CreditPackPurchaseRequest.put(validatedCreditPackRequest);
-      logActionWithPayload(
+      await db.addData("CreditPackPurchaseRequest", validatedCreditPackRequest);
+      utils.logActionWithPayload(
         "requesting",
         "a new Pastel credit pack ticket",
         validatedCreditPackRequest
       );
       const { challenge, challenge_id, challenge_signature } =
         await this.requestAndSignChallenge(supernodeURL);
-      let preparedCreditPackRequest = await prepareModelForEndpoint(
+      let preparedCreditPackRequest = await utils.prepareModelForEndpoint(
         creditPackRequest
       );
-      const response = await axios.post(
+      const response = await fetch(
         `${supernodeURL}/credit_purchase_initial_request`,
         {
-          challenge,
-          challenge_id,
-          challenge_signature,
-          credit_pack_request: preparedCreditPackRequest,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            challenge,
+            challenge_id,
+            challenge_signature,
+            credit_pack_request: preparedCreditPackRequest,
+          }),
         }
       );
-      const result = response.data;
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
 
       if (result.rejection_reason_string) {
         logger.error(
           `Credit pack purchase request rejected: ${result.rejection_reason_string}`
         );
-        let rejectionResponse = await prepareModelForValidation(result);
-        let validatedRejection = null;
-        try {
-          validatedRejection =
-            await creditPackPurchaseRequestRejectionSchema.validateAsync(
-              rejectionResponse
-            );
-        } catch (error) {
+        let rejectionResponse = await utils.prepareModelForValidation(result);
+        const { rejectionError, value: validatedRejection } =
+          await schemas.creditPackPurchaseRequestRejectionSchema.validate(
+            rejectionResponse
+          );
+        if (rejectionError) {
           throw new Error(
             `Invalid credit pack purchase request rejection: ${rejectionError.message}`
           );
         }
-        const creditPackPurchaseRequestRejectionInstance =
-          await CreditPackPurchaseRequestRejection.put(validatedRejection);
-        return creditPackPurchaseRequestRejectionInstance;
+        await db.addData(
+          "CreditPackPurchaseRequestRejection",
+          validatedRejection
+        );
+        return validatedRejection;
       } else {
-        logActionWithPayload(
+        utils.logActionWithPayload(
           "receiving",
           "response to credit pack purchase request",
           result
         );
-        let preparedResult = await prepareModelForValidation(result);
+        let preparedResult = await utils.prepareModelForValidation(result);
         const { priceQuoteError, value: validatedPriceQuote } =
-          await creditPackPurchaseRequestPreliminaryPriceQuoteSchema.validate(
+          await schemas.creditPackPurchaseRequestPreliminaryPriceQuoteSchema.validate(
             preparedResult
           );
         if (priceQuoteError) {
@@ -277,15 +491,15 @@ class PastelInferenceClient {
             "Invalid credit pack request: " + priceQuoteError.message
           );
         }
-        const creditPackPurchaseRequestPreliminaryPriceQuoteInstance =
-          await CreditPackPurchaseRequestPreliminaryPriceQuote.put(
-            validatedPriceQuote
-          );
-        return creditPackPurchaseRequestPreliminaryPriceQuoteInstance;
+        await db.addData(
+          "CreditPackPurchaseRequestPreliminaryPriceQuote",
+          validatedPriceQuote
+        );
+        return validatedPriceQuote;
       }
     } catch (error) {
       logger.error(
-        `Error initiating credit pack ticket purchase: ${safeStringify(
+        `Error initiating credit pack ticket purchase: ${utils.safeStringify(
           error.message
         )}`
       );
@@ -308,15 +522,17 @@ class PastelInferenceClient {
     maximumPerCreditPriceInPSL
   ) {
     if (!maximumTotalCreditPackPriceInPSL && !maximumPerCreditPriceInPSL) {
-      maximumPerCreditPriceInPSL =
-        process.env.MAXIMUM_PER_CREDIT_PRICE_IN_PSL_FOR_CLIENT;
+      maximumPerCreditPriceInPSL = parseFloat(
+        localStorage.getItem("MAXIMUM_PER_CREDIT_PRICE_IN_PSL_FOR_CLIENT") ||
+          "0.1"
+      );
     }
     const {
       preliminary_quoted_price_per_credit_in_psl: quotedPricePerCredit,
       preliminary_total_cost_of_credit_pack_in_psl: quotedTotalPrice,
       credit_pack_purchase_request_fields_json_b64: requestFieldsB64,
     } = preliminaryPriceQuote;
-    let requestFields = JSON.parse(atob(requestFieldsB64)); // Decode base64 string
+    let requestFields = JSON.parse(atob(requestFieldsB64));
     const { requested_initial_credits_in_credit_pack: requestedCredits } =
       requestFields;
     if (!maximumTotalCreditPackPriceInPSL) {
@@ -327,7 +543,7 @@ class PastelInferenceClient {
         maximumTotalCreditPackPriceInPSL / requestedCredits;
     }
     const estimatedPricePerCredit =
-      await estimatedMarketPriceOfInferenceCreditsInPSLTerms();
+      await utils.estimatedMarketPriceOfInferenceCreditsInPSLTerms();
     const priceDifferencePercentage =
       await this.calculatePriceDifferencePercentage(
         quotedPricePerCredit,
@@ -341,8 +557,7 @@ class PastelInferenceClient {
       quotedPricePerCredit <= maximumPerCreditPriceInPSL &&
       quotedTotalPrice <= maximumTotalCreditPackPriceInPSL &&
       priceDifferencePercentage <=
-        process.env
-          .MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING
+        MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING
     ) {
       logger.info(
         `Preliminary price quote is within the acceptable range: ${numberFormat.format(
@@ -356,10 +571,8 @@ class PastelInferenceClient {
         )} PSL total. The price difference from the estimated fair market price is ${percentageFormat(
           priceDifferencePercentage * 100
         )}%, which is within the allowed maximum of ${percentageFormat(
-          process.env
-            .MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING *
-            100
-        )}%.`
+          MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING * 100
+        )}%. Please be patient while the new credit pack request is initialized.`
       );
       return true;
     } else {
@@ -375,13 +588,27 @@ class PastelInferenceClient {
         )} PSL total. The price difference from the estimated fair market price is ${percentageFormat(
           priceDifferencePercentage * 100
         )}%, which exceeds the allowed maximum of ${percentageFormat(
-          process.env
-            .MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING *
-            100
+          MAXIMUM_LOCAL_CREDIT_PRICE_DIFFERENCE_TO_ACCEPT_CREDIT_PRICING * 100
         )}%.`
       );
       return false;
     }
+  }
+
+  async internalEstimateOfCreditPackTicketCostInPSL(
+    desiredNumberOfCredits,
+    priceCushionPercentage
+  ) {
+    const estimatedPricePerCredit =
+      await utils.estimatedMarketPriceOfInferenceCreditsInPSLTerms();
+    const estimatedTotalCostOfTicket =
+      Math.round(
+        desiredNumberOfCredits *
+          estimatedPricePerCredit *
+          (1 + priceCushionPercentage) *
+          100
+      ) / 100;
+    return estimatedTotalCostOfTicket;
   }
 
   async creditPackTicketPreliminaryPriceQuoteResponse(
@@ -392,7 +619,7 @@ class PastelInferenceClient {
     maximumPerCreditPriceInPSL
   ) {
     try {
-      if (preliminaryPriceQuote instanceof CreditPackPurchaseRequestRejection.constructor) {
+      if (preliminaryPriceQuote.rejection_reason_string) {
         logger.error(
           `Credit pack purchase request rejected: ${preliminaryPriceQuote.rejection_reason_string}`
         );
@@ -405,59 +632,64 @@ class PastelInferenceClient {
         maximumPerCreditPriceInPSL
       );
 
+      logger.info(
+        `Agree with price quote: ${agreeWithPriceQuote}; responding to preliminary price quote to Supernode at ${supernodeURL}...`
+      );
       const priceQuoteResponse = {
-          id: uuidv4(),
-          sha3_256_hash_of_credit_pack_purchase_request_fields:
-            creditPackRequest.sha3_256_hash_of_credit_pack_purchase_request_fields,
-          sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_fields:
-            preliminaryPriceQuote.sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_fields,
-          credit_pack_purchase_request_fields_json_b64:
-            preliminaryPriceQuote.credit_pack_purchase_request_fields_json_b64,
-          agree_with_preliminary_price_quote: agreeWithPriceQuote,
-          credit_usage_tracking_psl_address:
-            preliminaryPriceQuote.credit_usage_tracking_psl_address,
-          preliminary_quoted_price_per_credit_in_psl: parseFloat(
-            preliminaryPriceQuote.preliminary_quoted_price_per_credit_in_psl
-          ),
-          preliminary_price_quote_response_timestamp_utc_iso_string:
-            getIsoStringWithMicroseconds(),
-          preliminary_price_quote_response_pastel_block_height: parseInt(
-            await getCurrentPastelBlockHeight(),
-            10
-          ),
-          preliminary_price_quote_response_message_version_string: "1.0",
-          requesting_end_user_pastelid:
-            creditPackRequest.requesting_end_user_pastelid,
-          sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_response_fields:
-            "",
-          requesting_end_user_pastelid_signature_on_preliminary_price_quote_response_hash:
-            "",
-        };
+        sha3_256_hash_of_credit_pack_purchase_request_fields:
+          creditPackRequest.sha3_256_hash_of_credit_pack_purchase_request_fields,
+        sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_fields:
+          preliminaryPriceQuote.sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_fields,
+        credit_pack_purchase_request_fields_json_b64:
+          preliminaryPriceQuote.credit_pack_purchase_request_fields_json_b64,
+        agree_with_preliminary_price_quote: agreeWithPriceQuote,
+        credit_usage_tracking_psl_address:
+          preliminaryPriceQuote.credit_usage_tracking_psl_address,
+        preliminary_quoted_price_per_credit_in_psl: parseFloat(
+          preliminaryPriceQuote.preliminary_quoted_price_per_credit_in_psl
+        ),
+        preliminary_price_quote_response_timestamp_utc_iso_string:
+          getIsoStringWithMicroseconds(),
+        preliminary_price_quote_response_pastel_block_height:
+          await rpc.getCurrentPastelBlockHeight(),
+        preliminary_price_quote_response_message_version_string: "1.0",
+        requesting_end_user_pastelid:
+          creditPackRequest.requesting_end_user_pastelid,
+        sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_response_fields:
+          "",
+        requesting_end_user_pastelid_signature_on_preliminary_price_quote_response_hash:
+          "",
+      };
+
       // Compute hashes and signatures
       priceQuoteResponse.sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_response_fields =
-        await computeSHA3256HashOfSQLModelResponseFields(priceQuoteResponse);
+        await utils.computeSHA3256HashOfSQLModelResponseFields(
+          priceQuoteResponse
+        );
       priceQuoteResponse.requesting_end_user_pastelid_signature_on_preliminary_price_quote_response_hash =
-        await signMessageWithPastelID(
+        await rpc.signMessageWithPastelID(
           creditPackRequest.requesting_end_user_pastelid,
           priceQuoteResponse.sha3_256_hash_of_credit_pack_purchase_request_preliminary_price_quote_response_fields,
           this.passphrase
         );
+
       // Validate the price quote response
       const {
         error: priceQuoteValidationError,
         value: validatedPriceQuoteResponse,
       } =
-        await creditPackPurchaseRequestPreliminaryPriceQuoteResponseSchema.validate(
-          priceQuoteResponse.toJSON()
+        await schemas.creditPackPurchaseRequestPreliminaryPriceQuoteResponseSchema.validate(
+          priceQuoteResponse
         );
       if (priceQuoteValidationError) {
         throw new Error(
           `Invalid price quote response: ${priceQuoteValidationError.message}`
         );
       }
+
       // Prepare model for endpoint before sending
-      let preparedPriceQuoteResponse = await prepareModelForEndpoint(
-        priceQuoteResponse
+      let preparedPriceQuoteResponse = await utils.prepareModelForEndpoint(
+        validatedPriceQuoteResponse
       );
 
       delete preparedPriceQuoteResponse["id"];
@@ -476,44 +708,51 @@ class PastelInferenceClient {
         preliminary_price_quote_response: preparedPriceQuoteResponse,
       };
 
-      const response = await axios.post(
+      const response = await fetch(
         `${supernodeURL}/credit_purchase_preliminary_price_quote_response`,
-        completePriceQuoteResponse,
-        { timeout: 3 * MESSAGING_TIMEOUT_IN_SECONDS * 1000 }
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(completePriceQuoteResponse),
+        }
       );
-      const result = response.data;
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+
       if (result.termination_reason_string) {
         logger.error(
           `Credit pack purchase request response terminated: ${result.termination_reason_string}`
         );
-        const terminationResponse = await prepareModelForValidation(result);
-        let validatedTermination = null
-        try {
-          validatedTermination =
-          await creditPackPurchaseRequestResponseTerminationSchema.validateAsync(
+        const terminationResponse = await utils.prepareModelForValidation(
+          result
+        );
+        const { error: terminationError, value: validatedTermination } =
+          await schemas.creditPackPurchaseRequestResponseTerminationSchema.validate(
             terminationResponse
           );
-        } catch (error) {
+        if (terminationError) {
           throw new Error(
-            `Invalid credit pack purchase request response termination: ${error.message}`
+            `Invalid credit pack purchase request response termination: ${terminationError.message}`
           );
         }
-        const terminationInstance =
-          await CreditPackPurchaseRequestResponseTermination.put(
-            validatedTermination
-          );
-        return terminationInstance;
-      } else {
-        let transformedResult = transformCreditPackPurchaseRequestResponse(
-          await prepareModelForValidation(result)
+        await db.addData(
+          "CreditPackPurchaseRequestResponseTermination",
+          validatedTermination
         );
-        logActionWithPayload(
+        return validatedTermination;
+      } else {
+        let transformedResult =
+          utils.transformCreditPackPurchaseRequestResponse(
+            await utils.prepareModelForValidation(result)
+          );
+        utils.logActionWithPayload(
           "receiving",
           "response to credit pack purchase request",
           transformedResult
         );
         const { error: resultError, value: validatedResponse } =
-          await creditPackPurchaseRequestResponseSchema.validate(
+          await schemas.creditPackPurchaseRequestResponseSchema.validate(
             transformedResult
           );
         if (resultError) {
@@ -521,14 +760,15 @@ class PastelInferenceClient {
             `Invalid credit pack purchase request response: ${resultError.message}`
           );
         }
-        const responseInstance = await CreditPackPurchaseRequestResponse.put(
+        await db.addData(
+          "CreditPackPurchaseRequestResponse",
           validatedResponse
         );
-        return responseInstance;
+        return validatedResponse;
       }
     } catch (error) {
       logger.error(
-        `Error responding to preliminary price quote: ${safeStringify(
+        `Error responding to preliminary price quote: ${utils.safeStringify(
           error.message
         )}`
       );
@@ -543,34 +783,37 @@ class PastelInferenceClient {
     try {
       const { challenge, challenge_id, challenge_signature } =
         await this.requestAndSignChallenge(supernodeURL);
-      const payload = await prepareModelForEndpoint(
+      const payload = await utils.prepareModelForEndpoint(
         creditPackPurchaseRequestConfirmation
       );
-      logActionWithPayload(
+      utils.logActionWithPayload(
         "confirming",
         "credit pack purchase request",
         payload
       );
-      const response = await axios.post(
+      const response = await fetch(
         `${supernodeURL}/confirm_credit_purchase_request`,
         {
-          confirmation: payload,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 30 * 1000, // Need to be patient with the timeout here since it requires the transaction to be mined/confirmed
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmation: payload,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
         }
       );
-      const result = response.data;
-      logActionWithPayload(
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      utils.logActionWithPayload(
         "receiving",
         "response to credit pack purchase confirmation",
         result
       );
       const { error: validationError, value: validatedResult } =
-        await creditPackPurchaseRequestConfirmationResponseSchema.validate(
+        await schemas.creditPackPurchaseRequestConfirmationResponseSchema.validate(
           result
         );
       if (validationError) {
@@ -578,16 +821,107 @@ class PastelInferenceClient {
           `Invalid credit pack purchase request confirmation response: ${validationError.message}`
         );
       }
-      const creditPackPurchaseRequestConfirmationResponseInstance =
-        await CreditPackPurchaseRequestConfirmationResponse.put(result);
-      return creditPackPurchaseRequestConfirmationResponseInstance;
+      await db.addData(
+        "CreditPackPurchaseRequestConfirmationResponse",
+        validatedResult
+      );
+      return validatedResult;
     } catch (error) {
       logger.error(
-        `Error confirming credit pack purchase request: ${safeStringify(
+        `Error confirming credit pack purchase request: ${utils.safeStringify(
           error.message
         )}`
       );
       throw error;
+    }
+  }
+
+  async checkStatusOfCreditPurchaseRequest(
+    supernodeURL,
+    creditPackPurchaseRequestHash
+  ) {
+    try {
+      // Request challenge from the server
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      // Build and validate the status check model
+      const statusCheck = {
+        sha3_256_hash_of_credit_pack_purchase_request_fields:
+          creditPackPurchaseRequestHash,
+        requesting_end_user_pastelid: this.pastelID,
+        requesting_end_user_pastelid_signature_on_sha3_256_hash_of_credit_pack_purchase_request_fields:
+          await rpc.signMessageWithPastelID(
+            this.pastelID,
+            creditPackPurchaseRequestHash,
+            this.passphrase
+          ),
+      };
+      const { error: validationError, value: validatedStatusCheck } =
+        await schemas.creditPackRequestStatusCheckSchema.validate(statusCheck);
+      if (validationError) {
+        logger.error(
+          `Invalid credit pack request status check: ${validationError.message}`
+        );
+        throw new Error(
+          `Invalid credit pack request status check: ${validationError.message}`
+        );
+      }
+      delete validatedStatusCheck["id"];
+      utils.logActionWithPayload(
+        "checking",
+        "status of credit pack purchase request",
+        validatedStatusCheck
+      );
+      // Send the request to the server
+      const response = await fetch(
+        `${supernodeURL}/check_status_of_credit_purchase_request`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            credit_pack_request_status_check: validatedStatusCheck,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
+        }
+      );
+      // Check response status and handle any errors
+      if (!response.ok) {
+        throw new Error(
+          `HTTP error ${response.status}: ${response.statusText}`
+        );
+      }
+      const responseData = await response.json();
+      utils.logActionWithPayload(
+        "receiving",
+        "credit pack purchase request response from Supernode",
+        responseData
+      );
+      // Validate the received result
+      let transformedResult = await utils.prepareModelForValidation(
+        responseData
+      );
+      delete transformedResult["id"];
+      const { error: resultError, value: validatedResult } =
+        await schemas.creditPackPurchaseRequestStatusSchema.validate(
+          transformedResult
+        );
+      if (resultError) {
+        throw new Error(
+          `Invalid credit pack purchase request status: ${resultError.message}`
+        );
+      }
+      // Create and return the status instance from the validated result
+      await db.addData("CreditPackPurchaseRequestStatus", validatedResult);
+      return validatedResult;
+    } catch (error) {
+      logger.error(
+        `Error checking status of credit purchase request: ${utils.safeStringify(
+          error.message
+        )}`
+      );
+      throw error; // Rethrow to handle error upstream
     }
   }
 
@@ -598,8 +932,8 @@ class PastelInferenceClient {
     try {
       // Validate the incoming data
       const { error, value: validatedConfirmation } =
-        await creditPackPurchaseRequestConfirmationSchema.validate(
-          creditPackPurchaseRequestConfirmation.toJSON()
+        await schemas.creditPackPurchaseRequestConfirmationSchema.validate(
+          creditPackPurchaseRequestConfirmation
         );
       if (error) {
         logger.error(
@@ -617,21 +951,22 @@ class PastelInferenceClient {
       delete payload["id"]; // Removing the 'id' key as done in the Python method
 
       // Send the request to the server with a shortened timeout
-      const response = await axios.post(
+      const response = await fetch(
         `${supernodeURL}/credit_pack_purchase_completion_announcement`,
         {
-          confirmation: payload,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: 2 * 1000, // Shortened timeout of 2 seconds
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmation: payload,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
         }
       );
 
       // Check response status and log any errors
-      if (response.status !== 200) {
+      if (!response.ok) {
         logger.error(`HTTP error ${response.status}: ${response.statusText}`);
       } else {
         logger.info(
@@ -640,11 +975,7 @@ class PastelInferenceClient {
       }
     } catch (error) {
       // Log the error without rethrowing to prevent upstream disruption
-      if (error.response) {
-        logger.error(
-          `HTTP error sending credit pack purchase completion announcement to ${supernodeURL}: ${error.response.status} ${error.response.statusText}`
-        );
-      } else if (error.code === "ECONNABORTED") {
+      if (error.name === "AbortError") {
         logger.error(
           `Timeout error sending credit pack purchase completion announcement to ${supernodeURL}: ${error.message}`
         );
@@ -658,100 +989,14 @@ class PastelInferenceClient {
     }
   }
 
-  async checkStatusOfCreditPurchaseRequest(
-    supernodeURL,
-    creditPackPurchaseRequestHash
-  ) {
-    try {
-      // Request challenge from the server
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-      // Build and validate the status check model
-      const statusCheck = {
-        id: uuidv4(),
-        sha3_256_hash_of_credit_pack_purchase_request_fields:
-          creditPackPurchaseRequestHash,
-        requesting_end_user_pastelid: this.pastelID,
-        requesting_end_user_pastelid_signature_on_sha3_256_hash_of_credit_pack_purchase_request_fields:
-          await signMessageWithPastelID(
-            this.pastelID,
-            creditPackPurchaseRequestHash,
-            this.passphrase
-          ),
-      };
-      const { error: validationError, value: validatedStatusCheck } =
-        await creditPackRequestStatusCheckSchema.validate(statusCheck.toJSON());
-      if (validationError) {
-        logger.error(
-          `Invalid credit pack request status check: ${validationError.message}`
-        );
-        throw new Error(
-          `Invalid credit pack request status check: ${validationError.message}`
-        );
-      }
-      delete validatedStatusCheck["id"];
-      logActionWithPayload(
-        "checking",
-        "status of credit pack purchase request",
-        validatedStatusCheck
-      );
-      // Send the request to the server
-      const response = await axios.post(
-        `${supernodeURL}/check_status_of_credit_purchase_request`,
-        {
-          credit_pack_request_status_check: validatedStatusCheck,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-      // Check response status and handle any errors
-      if (response.status !== 200) {
-        throw new Error(
-          `HTTP error ${response.status}: ${response.statusText}`
-        );
-      }
-      logActionWithPayload(
-        "receiving",
-        "credit pack purchase request response from Supernode",
-        response.data
-      );
-      // Validate the received result
-      let transformedResult = await prepareModelForValidation(response.data);
-      delete transformedResult["id"];
-      const { error: resultError, value: validatedResult } =
-        await creditPackPurchaseRequestStatusSchema.validate(transformedResult);
-      if (resultError) {
-        throw new Error(
-          `Invalid credit pack purchase request status: ${resultError.message}`
-        );
-      }
-      // Create and return the status instance from the validated result
-      const statusInstance = await CreditPackPurchaseRequestStatus.put(
-        validatedResult
-      );
-      return statusInstance;
-    } catch (error) {
-      logger.error(
-        `Error checking status of credit purchase request: ${safeStringify(
-          error.message
-        )}`
-      );
-      throw error; // Rethrow to handle error upstream
-    }
-  }
-
   async creditPackStorageRetryRequest(
     supernodeURL,
     creditPackStorageRetryRequest
   ) {
     try {
       const { error, value: validatedRequest } =
-        await creditPackStorageRetryRequestSchema.validate(
-          creditPackStorageRetryRequest.toJSON()
+        await schemas.creditPackStorageRetryRequestSchema.validate(
+          creditPackStorageRetryRequest
         );
       if (error) {
         throw new Error(
@@ -759,43 +1004,44 @@ class PastelInferenceClient {
         );
       }
 
-      const requestInstance = await CreditPackStorageRetryRequest.put(
-        validatedRequest
-      );
+      await db.addData("CreditPackStorageRetryRequest", validatedRequest);
 
       const { challenge, challenge_id, challenge_signature } =
         await this.requestAndSignChallenge(supernodeURL);
 
-      const payload = await prepareModelForEndpoint(requestInstance);
-      logActionWithPayload(
+      const payload = await utils.prepareModelForEndpoint(validatedRequest);
+      utils.logActionWithPayload(
         "sending",
         "credit pack storage retry request",
         payload
       );
 
-      const response = await axios.post(
+      const response = await fetch(
         `${supernodeURL}/credit_pack_storage_retry_request`,
         {
-          request: payload,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            request: payload,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
         }
       );
 
-      const result = response.data;
-      logActionWithPayload(
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      utils.logActionWithPayload(
         "receiving",
         "response to credit pack storage retry request",
         result
       );
 
-      let transformedResult = await prepareModelForValidation(result);
+      let transformedResult = await utils.prepareModelForValidation(result);
       const { error: responseError, value: validatedResponse } =
-        await creditPackStorageRetryRequestResponseSchema.validate(
+        await schemas.creditPackStorageRetryRequestResponseSchema.validate(
           transformedResult
         );
       if (responseError) {
@@ -804,12 +1050,517 @@ class PastelInferenceClient {
         );
       }
 
-      const responseInstance =
-        await CreditPackStorageRetryRequestResponse.put(validatedResponse);
-      return responseInstance;
+      await db.addData(
+        "CreditPackStorageRetryRequestResponse",
+        validatedResponse
+      );
+      return validatedResponse;
     } catch (error) {
       logger.error(
-        `Error sending credit pack storage retry request: ${safeStringify(
+        `Error sending credit pack storage retry request: ${utils.safeStringify(
+          error.message
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async creditPackStorageRetryCompletionAnnouncement(
+    supernodeURL,
+    creditPackStorageRetryRequestResponse
+  ) {
+    try {
+      const { error, value: validatedResponse } =
+        await schemas.creditPackStorageRetryRequestResponseSchema.validate(
+          creditPackStorageRetryRequestResponse
+        );
+      if (error) {
+        throw new Error(
+          `Invalid credit pack storage retry request response: ${error.message}`
+        );
+      }
+
+      await db.addData(
+        "CreditPackStorageRetryRequestResponse",
+        validatedResponse
+      );
+
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+
+      const payload = await utils.prepareModelForEndpoint(validatedResponse);
+      utils.logActionWithPayload(
+        "sending",
+        "storage retry completion announcement message",
+        payload
+      );
+
+      const response = await fetch(
+        `${supernodeURL}/credit_pack_storage_retry_completion_announcement`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            response: payload,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
+        }
+      );
+
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+    } catch (error) {
+      logger.error(
+        `Error sending credit pack storage retry completion announcement: ${utils.safeStringify(
+          error.message
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async retrieveCreditPackTicketFromPurchaseBurnTxid(supernodeURL, txid) {
+    try {
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const payload = {
+        purchase_burn_txid: txid,
+        challenge,
+        challenge_id,
+        challenge_signature,
+      };
+      utils.logActionWithPayload(
+        "retrieving",
+        "credit pack ticket from purchase burn txid",
+        payload
+      );
+
+      const response = await fetch(
+        `${supernodeURL}/retrieve_credit_pack_ticket_from_purchase_burn_txid`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok)
+        throw new Error(`HTTP error! Status: ${response.status}`);
+
+      const ticketInfo = await response.json();
+      logger.info(
+        `Received credit pack ticket for purchase burn txid ${txid}: ${JSON.stringify(
+          ticketInfo
+        )}`
+      );
+      return ticketInfo;
+    } catch (error) {
+      logger.error(
+        `Error retrieving credit pack ticket for purchase burn txid ${txid}: ${error.message}`
+      );
+      throw error;
+    }
+  }
+
+  async getFinalCreditPackRegistrationTxidFromPurchaseBurnTxid(
+    supernodeURL,
+    purchaseBurnTxid
+  ) {
+    try {
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const payload = {
+        purchase_burn_txid: purchaseBurnTxid,
+        challenge,
+        challenge_id,
+        challenge_signature,
+      };
+      utils.logActionWithPayload(
+        "retrieving",
+        "final credit pack registration txid",
+        payload
+      );
+
+      const response = await fetch(
+        `${supernodeURL}/get_final_credit_pack_registration_txid_from_credit_purchase_burn_txid`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok)
+        throw new Error(`HTTP error! Status: ${response.status}`);
+
+      const responseData = await response.json();
+      const finalTxid = responseData.final_credit_pack_registration_txid;
+      logger.info(
+        `Received final credit pack registration txid for purchase burn txid ${purchaseBurnTxid}: ${finalTxid}`
+      );
+      return finalTxid;
+    } catch (error) {
+      logger.error(
+        `Error retrieving final credit pack registration txid for purchase burn txid ${purchaseBurnTxid}: ${error.message}`
+      );
+      throw error;
+    }
+  }
+
+  async makeInferenceAPIUsageRequest(supernodeURL, requestData) {
+    try {
+      const { error, value: validatedRequest } =
+        await schemas.inferenceAPIUsageRequestSchema.validate(requestData);
+      if (error) {
+        throw new Error(
+          `Invalid inference API usage request: ${error.message}`
+        );
+      }
+      delete validatedRequest["id"];
+      await db.addData("InferenceAPIUsageRequest", validatedRequest);
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const payload = await utils.prepareModelForEndpoint(validatedRequest);
+      utils.logActionWithPayload(
+        "making",
+        "inference usage request",
+        validatedRequest
+      );
+      const response = await fetch(
+        `${supernodeURL}/make_inference_api_usage_request`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inference_api_usage_request: validatedRequest,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
+        }
+      );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      utils.logActionWithPayload(
+        "received",
+        "response to inference usage request",
+        result
+      );
+      let transformedResult = await utils.prepareModelForValidation(result);
+      delete transformedResult["id"];
+      const { error: responseError, value: validatedResponse } =
+        await schemas.inferenceAPIUsageResponseSchema.validate(
+          transformedResult
+        );
+      if (responseError) {
+        throw new Error(
+          `Invalid inference API usage response: ${responseError.message}`
+        );
+      }
+      await db.addData("InferenceAPIUsageResponse", validatedResponse);
+      return validatedResponse;
+    } catch (error) {
+      logger.error(
+        `Error making inference API usage request: ${utils.safeStringify(
+          error
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async sendInferenceConfirmation(supernodeURL, confirmationData) {
+    try {
+      const confirmationDataJSON = confirmationData;
+      // Remove the 'id' field from the JSON object
+      delete confirmationDataJSON["id"];
+
+      const { error, value: validatedConfirmation } =
+        await schemas.inferenceConfirmationSchema.validate(
+          confirmationDataJSON
+        );
+      if (error) {
+        throw new Error(
+          `Invalid inference confirmation data: ${error.message}`
+        );
+      }
+      await db.addData("InferenceConfirmation", validatedConfirmation);
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+
+      const payload = await utils.prepareModelForEndpoint(
+        validatedConfirmation
+      );
+      utils.logActionWithPayload("sending", "inference confirmation", payload);
+      const response = await fetch(
+        `${supernodeURL}/confirm_inference_request`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inference_confirmation: confirmationDataJSON,
+            challenge,
+            challenge_id,
+            challenge_signature,
+          }),
+        }
+      );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      utils.logActionWithPayload(
+        "receiving",
+        "response to inference confirmation",
+        result
+      );
+
+      return result;
+    } catch (error) {
+      logger.error(
+        `Error sending inference confirmation: ${utils.safeStringify(
+          error.message
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async checkStatusOfInferenceRequestResults(
+    supernodeURL,
+    inferenceResponseID
+  ) {
+    try {
+      logger.info(
+        `Checking status of inference request results for ID ${inferenceResponseID}`
+      );
+
+      const response = await fetch(
+        `${supernodeURL}/check_status_of_inference_request_results/${inferenceResponseID}`
+      );
+
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      utils.logActionWithPayload(
+        "receiving",
+        `status of inference request results for ID ${inferenceResponseID}`,
+        result
+      );
+
+      return typeof result === "boolean" ? result : false;
+    } catch (error) {
+      logger.error(
+        `Error checking status of inference request results from Supernode URL: ${supernodeURL}: ${utils.safeStringify(
+          error
+        )}`
+      );
+      return false;
+    }
+  }
+
+  async retrieveInferenceOutputResults(
+    supernodeURL,
+    inferenceRequestID,
+    inferenceResponseID
+  ) {
+    try {
+      const { challenge, challenge_id, challenge_signature } =
+        await this.requestAndSignChallenge(supernodeURL);
+      const params = new URLSearchParams({
+        inference_response_id: inferenceResponseID,
+        pastelid: this.pastelID,
+        challenge,
+        challenge_id,
+        challenge_signature,
+      });
+      utils.logActionWithPayload(
+        "attempting",
+        `to retrieve inference output results for response ID ${inferenceResponseID}`,
+        params
+      );
+      const response = await fetch(
+        `${supernodeURL}/retrieve_inference_output_results?${params}`,
+        {
+          method: "POST",
+        }
+      );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      delete result["id"]; // Remove the 'id' field from the JSON object
+      utils.logActionWithPayload(
+        "receiving",
+        "inference output results",
+        result
+      );
+      let transformedResult = await utils.prepareModelForValidation(result);
+      const { error: validationError, value: validatedResult } =
+        await schemas.inferenceAPIOutputResultSchema.validate(
+          transformedResult
+        );
+      if (validationError) {
+        throw new Error(
+          `Invalid inference API output result: ${validationError.message}`
+        );
+      }
+      await db.addData("InferenceAPIOutputResult", validatedResult);
+      return validatedResult;
+    } catch (error) {
+      logger.error(
+        `Error retrieving inference output results: ${utils.safeStringify(
+          error.message
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async callAuditInferenceRequestResponse(supernodeURL, inferenceResponseID) {
+    try {
+      const signature = await rpc.signMessageWithPastelID(
+        this.pastelID,
+        inferenceResponseID,
+        this.passphrase
+      );
+      const payload = {
+        inference_response_id: inferenceResponseID,
+        pastel_id: this.pastelID,
+        signature,
+      };
+      const response = await fetch(
+        `${supernodeURL}/audit_inference_request_response`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      delete result["id"]; // Remove the 'id' field from the JSON object
+      let transformedResult = await utils.prepareModelForValidation(result);
+      const { error: validationError, value: validatedResult } =
+        await schemas.inferenceAPIUsageResponseSchema.validate(
+          transformedResult
+        );
+      if (validationError) {
+        throw new Error(
+          `Invalid inference API usage response: ${validationError.message}`
+        );
+      }
+      return validatedResult;
+    } catch (error) {
+      logger.error(
+        `Error calling audit inference request response from Supernode URL: ${supernodeURL}: ${utils.safeStringify(
+          error
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async callAuditInferenceRequestResult(supernodeURL, inferenceResponseID) {
+    try {
+      const signature = await rpc.signMessageWithPastelID(
+        this.pastelID,
+        inferenceResponseID,
+        this.passphrase
+      );
+      const payload = {
+        inference_response_id: inferenceResponseID,
+        pastel_id: this.pastelID,
+        signature,
+      };
+      const response = await fetch(
+        `${supernodeURL}/audit_inference_request_result`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      delete result["id"]; // Remove the 'id' field from the JSON object
+      let transformedResult = await utils.prepareModelForValidation(result);
+      const { error: validationError, value: validatedResult } =
+        await schemas.inferenceAPIOutputResultSchema.validate(
+          transformedResult
+        );
+      if (validationError) {
+        throw new Error(
+          `Invalid inference API output result: ${validationError.message}`
+        );
+      }
+      return validatedResult;
+    } catch (error) {
+      logger.error(
+        `Error calling audit inference request result from Supernode URL: ${supernodeURL}: ${utils.safeStringify(
+          error
+        )}`
+      );
+      throw error;
+    }
+  }
+
+  async auditInferenceRequestResponseID(
+    inferenceResponseID,
+    pastelIDOfSupernodeToAudit
+  ) {
+    try {
+      const { validMasternodeListFullDF } = await rpc.checkSupernodeList();
+      const filteredSupernodes = await utils.filterSupernodes(
+        validMasternodeListFullDF
+      );
+
+      const supernodeURLsAndPastelIDs = filteredSupernodes
+        .filter(({ pastelID }) => pastelID !== pastelIDOfSupernodeToAudit)
+        .slice(0, 5); // Get the 5 closest supernodes
+
+      const listOfSupernodePastelIDs = supernodeURLsAndPastelIDs.map(
+        ({ pastelID }) => pastelID
+      );
+      const listOfSupernodeURLs = supernodeURLsAndPastelIDs.map(
+        ({ url }) => url
+      );
+      const listOfSupernodeIPs = listOfSupernodeURLs.map(
+        (url) => url.split("//")[1].split(":")[0]
+      );
+
+      logger.info(
+        `Now attempting to audit inference request response with ID ${inferenceResponseID} with ${listOfSupernodePastelIDs.length} closest supernodes (with Supernode IPs of ${listOfSupernodeIPs})...`
+      );
+
+      const responseAuditTasks = listOfSupernodeURLs.map((url) =>
+        this.callAuditInferenceRequestResponse(url, inferenceResponseID)
+      );
+      const responseAuditResults = await Promise.all(responseAuditTasks);
+
+      await new Promise((resolve) => setTimeout(resolve, 20000));
+
+      logger.info(
+        `Now attempting to audit inference request result for response ID ${inferenceResponseID} by comparing information from other Supernodes to the information reported by the Responding Supernode...`
+      );
+
+      const resultAuditTasks = listOfSupernodeURLs.map((url) =>
+        this.callAuditInferenceRequestResult(url, inferenceResponseID)
+      );
+      const resultAuditResults = await Promise.all(resultAuditTasks);
+
+      const auditResults = [...responseAuditResults, ...resultAuditResults];
+      logger.info(
+        `Audit results retrieved for inference response ID ${inferenceResponseID}`
+      );
+
+      return auditResults;
+    } catch (error) {
+      logger.error(
+        `Error auditing inference request response ID: ${utils.safeStringify(
           error.message
         )}`
       );
@@ -824,14 +1575,10 @@ class PastelInferenceClient {
     modelParametersJSON
   ) {
     try {
-      const response = await axios.get(
-        `${supernodeURL}/get_inference_model_menu`,
-        {
-          timeout: 4 * 1000,
-        }
-      );
-
-      const modelMenu = response.data;
+      const response = await fetch(`${supernodeURL}/get_inference_model_menu`);
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+      const modelMenu = await response.json();
       const desiredParameters = JSON.parse(modelParametersJSON);
 
       for (const model of modelMenu.models) {
@@ -904,645 +1651,64 @@ class PastelInferenceClient {
       }
       return false;
     } catch (error) {
-      logger.error(
-        `Error checking if Supernode supports desired model from Supernode URL: ${supernodeURL}: ${safeStringify(
-          error
-        )}`
-      );
       return false;
     }
   }
 
-  async getClosestSupernodeURLThatSupportsDesiredModel(
+  async getClosestSupernodeURLsThatSupportsDesiredModel(
     desiredModelCanonicalString,
     desiredModelInferenceTypeString,
-    desiredModelParametersJSON
+    desiredModelParametersJSON,
+    N = 12
   ) {
-    const number_of_closest_supernodes_to_check_at_one_time = 3;
-    try {
-      const { validMasternodeListFullDF, _ } = await checkSupernodeList();
-      const supernodeURLsAndPastelIDs =
-        await getNClosestSupernodesToPastelIDURLs(
-          validMasternodeListFullDF.length,
-          this.pastelID,
-          validMasternodeListFullDF
-        );
+    const timeoutPeriod = 3000; // Timeout period in milliseconds
 
-      const checkBatch = async (batch) => {
-        const modelSupportTasks = batch.map(({ url }) =>
+    try {
+      const { validMasternodeListFullDF } = await rpc.checkSupernodeList();
+      const filteredSupernodes = await utils.filterSupernodes(
+        validMasternodeListFullDF
+      );
+
+      // Prepare all the promises for checking supernodes concurrently
+      const checkSupernodePromises = filteredSupernodes.map((supernode) => {
+        const startTime = Date.now(); // Capture the start time for the supernode check
+
+        return Promise.race([
           this.checkIfSupernodeSupportsDesiredModel(
-            url,
+            supernode.url,
             desiredModelCanonicalString,
             desiredModelInferenceTypeString,
             desiredModelParametersJSON
-          )
-        );
-        const modelSupportResults = await Promise.all(modelSupportTasks);
-        return modelSupportResults;
-      };
+          ).then((result) => ({
+            result,
+            url: supernode.url,
+            responseTime: Date.now() - startTime, // Capture the response time
+          })),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout")), timeoutPeriod)
+          ),
+        ]).catch(() => null); // Silently catch and return null for failed requests
+      });
 
-      for (
-        let i = 0;
-        i < supernodeURLsAndPastelIDs.length;
-        i += number_of_closest_supernodes_to_check_at_one_time
-      ) {
-        const batch = supernodeURLsAndPastelIDs.slice(
-          i,
-          i + number_of_closest_supernodes_to_check_at_one_time
-        );
-        const modelSupportResults = await checkBatch(batch);
+      // Wait for all promises to settle
+      const results = await Promise.allSettled(checkSupernodePromises);
 
-        const supportedSupernodeIndex = modelSupportResults.indexOf(true);
-        if (supportedSupernodeIndex !== -1) {
-          const closestSupportingSupernode = batch[supportedSupernodeIndex];
-          logger.info(
-            `Found supporting supernode: ${closestSupportingSupernode.pastelID} | URL: ${closestSupportingSupernode.url}`
-          );
-          return {
-            supernodeSupportDict: {
-              [closestSupportingSupernode.pastelID]: true,
-            },
-            closestSupportingSupernodePastelID:
-              closestSupportingSupernode.pastelID,
-            closestSupportingSupernodeURL: closestSupportingSupernode.url,
-          };
-        }
-      }
+      // Filter out null or rejected results
+      const validResponses = results
+        .filter((res) => res.status === "fulfilled" && res.value !== null)
+        .map((res) => res.value);
 
-      logger.warn(
-        `No supporting supernodes found for model: ${desiredModelCanonicalString}`
+      // Sort the valid responses by their response times (fastest first)
+      const sortedResponses = validResponses.sort(
+        (a, b) => a.responseTime - b.responseTime
       );
-      return {
-        supernodeSupportDict: {},
-        closestSupportingSupernodePastelID: null,
-        closestSupportingSupernodeURL: null,
-      };
+
+      // Return the closest N supernodes, capped at the number available
+      return sortedResponses.slice(0, N).map((response) => response.url);
     } catch (error) {
-      logger.error(
-        `Error getting closest Supernode URL that supports desired model: ${safeStringify(
-          error.message
-        )}`
-      );
-      throw error;
-    }
-  }
-
-  async makeInferenceAPIUsageRequest(supernodeURL, requestData) {
-    try {
-      const { error, value: validatedRequest } =
-        await inferenceAPIUsageRequestSchema.validate(requestData.toJSON());
-      if (error) {
-        throw new Error(
-          `Invalid inference API usage request: ${error.message}`
-        );
-      }
-      delete validatedRequest["id"];
-      const requestInstance = await InferenceAPIUsageRequest.put(
-        validatedRequest
-      );
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-      const payload = await prepareModelForEndpoint(requestInstance);
-      logActionWithPayload(
-        "making",
-        "inference usage request",
-        validatedRequest
-      );
-      const response = await axios.post(
-        `${supernodeURL}/make_inference_api_usage_request`,
-        {
-          inference_api_usage_request: validatedRequest,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 6 * 1000,
-        }
-      );
-      const result = response.data;
-      logActionWithPayload(
-        "received",
-        "response to inference usage request",
-        result
-      );
-      let transformedResult = await prepareModelForValidation(result);
-      delete transformedResult["id"];
-      const { error: responseError, value: validatedResponse } =
-        await inferenceAPIUsageResponseSchema.validate(transformedResult);
-      if (responseError) {
-        throw new Error(
-          `Invalid inference API usage response: ${responseError.message}`
-        );
-      }
-      const responseInstance = await InferenceAPIUsageResponse.put(
-        validatedResponse
-      );
-      return responseInstance;
-    } catch (error) {
-      logger.error(
-        `Error making inference API usage request: ${safeStringify(error)}`
-      );
-      throw error;
-    }
-  }
-
-  async sendInferenceConfirmation(supernodeURL, confirmationData) {
-    try {
-      const confirmationDataJSON = confirmationData.toJSON();
-      // Remove the 'id' field from the JSON object
-      delete confirmationDataJSON["id"];
-
-      const { error, value: validatedConfirmation } =
-        await inferenceConfirmationSchema.validate(confirmationDataJSON);
-      if (error) {
-        throw new Error(
-          `Invalid inference confirmation data: ${error.message}`
-        );
-      }
-      const confirmationInstance = await InferenceConfirmation.put(
-        validatedConfirmation
-      );
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-
-      const payload = await prepareModelForEndpoint(confirmationInstance);
-      logActionWithPayload("sending", "inference confirmation", payload);
-      const response = await axios.post(
-        `${supernodeURL}/confirm_inference_request`,
-        {
-          inference_confirmation: confirmationDataJSON,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 4 * 1000,
-        }
-      );
-      const result = response.data;
-      logActionWithPayload(
-        "receiving",
-        "response to inference confirmation",
-        result
-      );
-
-      return result;
-    } catch (error) {
-      logger.error(
-        `Error sending inference confirmation: ${safeStringify(error.message)}`
-      );
-      throw error;
-    }
-  }
-
-  async checkStatusOfInferenceRequestResults(
-    supernodeURL,
-    inferenceResponseID
-  ) {
-    try {
-      logger.info(
-        `Checking status of inference request results for ID ${inferenceResponseID}`
-      );
-
-      const response = await axios.get(
-        `${supernodeURL}/check_status_of_inference_request_results/${inferenceResponseID}`,
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-
-      const result = response.data;
-      logActionWithPayload(
-        "receiving",
-        `status of inference request results for ID ${inferenceResponseID}`,
-        result
-      );
-
-      return typeof result === "boolean" ? result : false;
-    } catch (error) {
-      if (error.response) {
-        logger.error(
-          `HTTP error checking status of inference request results from Supernode URL: ${supernodeURL}: ${safeStringify(
-            error
-          )}`
-        );
-      } else {
-        logger.error(
-          `Error checking status of inference request results from Supernode URL: ${supernodeURL}: ${safeStringify(
-            error
-          )}`
-        );
-      }
-      return false;
-    }
-  }
-
-  async retrieveInferenceOutputResults(
-    supernodeURL,
-    inferenceRequestID,
-    inferenceResponseID
-  ) {
-    try {
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-      const params = new URLSearchParams({
-        inference_response_id: inferenceResponseID,
-        pastelid: this.pastelID,
-        challenge,
-        challenge_id,
-        challenge_signature,
-      }).toString();
-      logActionWithPayload(
-        "attempting",
-        `to retrieve inference output results for response ID ${inferenceResponseID}`,
-        params
-      );
-      const response = await axios.post(
-        `${supernodeURL}/retrieve_inference_output_results?${params}`,
-        {}, // No data object needed since we're sending parameters in the URL
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 4 * 1000,
-        }
-      );
-      const result = response.data;
-      delete result["id"]; // Remove the 'id' field from the JSON object
-      logActionWithPayload("receiving", "inference output results", result);
-      let transformedResult = await prepareModelForValidation(result);
-      const { error: validationError, value: validatedResult } =
-        await inferenceAPIOutputResultSchema.validate(transformedResult);
-      if (validationError) {
-        throw new Error(
-          `Invalid inference API output result: ${validationError.message}`
-        );
-      }
-      const resultInstance = await InferenceAPIOutputResult.put(
-        validatedResult
-      );
-      return resultInstance;
-    } catch (error) {
-      logger.error(
-        `Error retrieving inference output results: ${safeStringify(
-          error.message
-        )}`
-      );
-      throw error;
-    }
-  }
-
-  async callAuditInferenceRequestResponse(supernodeURL, inferenceResponseID) {
-    try {
-      const signature = await signMessageWithPastelID(
-        this.pastelID,
-        inferenceResponseID,
-        this.passphrase
-      );
-      const payload = {
-        inference_response_id: inferenceResponseID,
-        pastel_id: this.pastelID,
-        signature,
-      };
-      const response = await axios.post(
-        `${supernodeURL}/audit_inference_request_response`,
-        payload,
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 2 * 1000,
-        }
-      );
-      const result = response.data;
-      delete result["id"]; // Remove the 'id' field from the JSON object
-      let transformedResult = await prepareModelForValidation(result);
-      const { error: validationError, value: validatedResult } =
-        await inferenceAPIUsageResponseSchema.validate(transformedResult);
-      if (validationError) {
-        throw new Error(
-          `Invalid inference API usage response: ${validationError.message}`
-        );
-      }
-      return validatedResult;
-    } catch (error) {
-      logger.error(
-        `Error calling audit inference request response from Supernode URL: ${supernodeURL}: ${safeStringify(
-          error
-        )}`
-      );
-      throw error;
-    }
-  }
-
-  async callAuditInferenceRequestResult(supernodeURL, inferenceResponseID) {
-    try {
-      const signature = await signMessageWithPastelID(
-        this.pastelID,
-        inferenceResponseID,
-        this.passphrase
-      );
-      const payload = {
-        inference_response_id: inferenceResponseID,
-        pastel_id: this.pastelID,
-        signature,
-      };
-      const response = await axios.post(
-        `${supernodeURL}/audit_inference_request_result`,
-        payload,
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 2 * 1000,
-        }
-      );
-      const result = response.data;
-      delete result["id"]; // Remove the 'id' field from the JSON object
-      let transformedResult = await prepareModelForValidation(result);
-      const { error: validationError, value: validatedResult } =
-        await inferenceAPIOutputResultSchema.validate(transformedResult);
-      if (validationError) {
-        throw new Error(
-          `Invalid inference API output result: ${validationError.message}`
-        );
-      }
-      return validatedResult;
-    } catch (error) {
-      logger.error(
-        `Error calling audit inference request result from Supernode URL: ${supernodeURL}: ${safeStringify(
-          error
-        )}`
-      );
-      throw error;
-    }
-  }
-
-  async auditInferenceRequestResponseID(
-    inferenceResponseID,
-    pastelIDOfSupernodeToAudit
-  ) {
-    try {
-      const { validMasternodeListFullDF, _ } = await checkSupernodeList();
-      const n = 4;
-      const supernodeURLsAndPastelIDs =
-        await getNClosestSupernodesToPastelIDURLs(
-          n,
-          this.pastelID,
-          validMasternodeListFullDF
-        );
-      const listOfSupernodePastelIDs = supernodeURLsAndPastelIDs
-        .filter(({ pastelID }) => pastelID !== pastelIDOfSupernodeToAudit)
-        .map(({ pastelID }) => pastelID);
-      const listOfSupernodeURLs = supernodeURLsAndPastelIDs
-        .filter(({ pastelID }) => pastelID !== pastelIDOfSupernodeToAudit)
-        .map(({ url }) => url);
-      const listOfSupernodeIPs = listOfSupernodeURLs.map(
-        (url) => url.split("//")[1].split(":")[0]
-      );
-
-      logger.info(
-        `Now attempting to audit inference request response with ID ${inferenceResponseID} with ${listOfSupernodePastelIDs.length} closest supernodes (with Supernode IPs of ${listOfSupernodeIPs})...`
-      );
-
-      const responseAuditTasks = listOfSupernodeURLs.map((url) =>
-        this.callAuditInferenceRequestResponse(url, inferenceResponseID)
-      );
-      const responseAuditResults = await Promise.all(responseAuditTasks);
-
-      await new Promise((resolve) => setTimeout(resolve, 20000));
-
-      logger.info(
-        `Now attempting to audit inference request result for response ID ${inferenceResponseID} by comparing information from other Supernodes to the information reported by the Responding Supernode...`
-      );
-
-      const resultAuditTasks = listOfSupernodeURLs.map((url) =>
-        this.callAuditInferenceRequestResult(url, inferenceResponseID)
-      );
-      const resultAuditResults = await Promise.all(resultAuditTasks);
-
-      const auditResults = [...responseAuditResults, ...resultAuditResults];
-      logger.info(
-        `Audit results retrieved for inference response ID ${inferenceResponseID}`
-      );
-
-      return auditResults;
-    } catch (error) {
-      logger.error(
-        `Error auditing inference request response ID: ${safeStringify(
-          error.message
-        )}`
-      );
-      throw error;
-    }
-  }
-  async getValidCreditPackTicketsForPastelID(supernodeURL) {
-    try {
-      if (!this.pastelID) {
-        return [];
-      }
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-      const payload = {
-        pastelid: this.pastelID,
-        challenge,
-        challenge_id,
-        challenge_signature,
-      };
-      logActionWithPayload(
-        "retrieving",
-        "valid credit pack tickets for PastelID",
-        payload
-      );
-      const response = await axios.post(
-        `${supernodeURL}/get_valid_credit_pack_tickets_for_pastelid`,
-        payload,
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000 * 3,
-        }
-      );
-      if (response.status !== 200) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      const validCreditPackTickets = response.data;
-      logger.info(
-        `Received ${validCreditPackTickets.length} valid credit pack tickets for PastelID ${this.pastelID}`
-      );
-      return validCreditPackTickets;
-    } catch (error) {
-      logger.error(
-        `Error retrieving valid credit pack tickets for PastelID: ${error.message}`
-      );
-      throw error;
-    }
-  }
-
-  async sendUserMessage(supernodeURL, userMessage) {
-    try {
-      const { error } = userMessageSchema.validate(userMessage);
-      if (error) {
-        throw new Error(`Invalid user message: ${error.message}`);
-      }
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-
-      const payload = userMessage.toJSON();
-      const response = await axios.post(
-        `${supernodeURL}/send_user_message`,
-        {
-          user_message: payload,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-      const result = response.data;
-      const { resultError, value: validatedResult } =
-        await userMessageSchema.validate(result);
-      if (error) {
-        throw new Error(`Invalid user message: ${resultError.message}`);
-      }
-      const userMessageInstance = await UserMessage.put(validatedResult);
-      return userMessageInstance;
-    } catch (error) {
-      logger.error(`Error sending user message: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async creditPackStorageRetryCompletionAnnouncement(
-    supernodeURL,
-    creditPackStorageRetryRequestResponse
-  ) {
-    try {
-      const { error, value: validatedResponse } =
-        await creditPackStorageRetryRequestResponseSchema.validate(
-          creditPackStorageRetryRequestResponse.toJSON()
-        );
-      if (error) {
-        throw new Error(
-          `Invalid credit pack storage retry request response: ${error.message}`
-        );
-      }
-
-      const responseInstance =
-        await CreditPackStorageRetryRequestResponse.put(validatedResponse);
-
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-
-      const payload = await prepareModelForEndpoint(responseInstance);
-      logActionWithPayload(
-        "sending",
-        "storage retry completion announcement message",
-        payload
-      );
-
-      const response = await axios.post(
-        `${supernodeURL}/credit_pack_storage_retry_completion_announcement`,
-        {
-          response: payload,
-          challenge,
-          challenge_id,
-          challenge_signature,
-        },
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-
-      response.data; // Access the response data to trigger any potential errors
-    } catch (error) {
-      logger.error(
-        `Error sending credit pack storage retry completion announcement: ${safeStringify(
-          error.message
-        )}`
-      );
-      throw error;
-    }
-  }
-
-  async retrieveCreditPackTicketFromPurchaseBurnTxid(supernodeURL, txid) {
-    try {
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-      const payload = {
-        purchase_burn_txid: txid,
-        challenge,
-        challenge_id,
-        challenge_signature,
-      };
-      logActionWithPayload(
-        "retrieving",
-        "credit pack ticket from purchase burn txid",
-        payload
-      );
-
-      const response = await axios.post(
-        `${supernodeURL}/retrieve_credit_pack_ticket_from_purchase_burn_txid`,
-        payload,
-        {
-          timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000,
-        }
-      );
-
-      if (response.status !== 200) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-
-      const ticketInfo = response.data;
-      logger.info(
-        `Received credit pack ticket for purchase burn txid ${txid}: ${JSON.stringify(
-          ticketInfo
-        )}`
-      );
-      return ticketInfo;
-    } catch (error) {
-      logger.error(
-        `Error retrieving credit pack ticket for purchase burn txid ${txid}: ${error.message}`
-      );
-      throw error;
-    }
-  }
-
-  async getFinalCreditPackRegistrationTxidFromPurchaseBurnTxid(
-    supernodeURL,
-    purchaseBurnTxid
-  ) {
-    try {
-      const { challenge, challenge_id, challenge_signature } =
-        await this.requestAndSignChallenge(supernodeURL);
-      const payload = {
-        purchase_burn_txid: purchaseBurnTxid,
-        challenge,
-        challenge_id,
-        challenge_signature,
-      };
-      logActionWithPayload(
-        "retrieving",
-        "final credit pack registration txid",
-        payload
-      );
-
-      const response = await axios.post(
-        `${supernodeURL}/get_final_credit_pack_registration_txid_from_credit_purchase_burn_txid`,
-        payload,
-        { timeout: MESSAGING_TIMEOUT_IN_SECONDS * 1000 }
-      );
-
-      if (response.status !== 200) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-
-      const finalTxid = response.data.final_credit_pack_registration_txid;
-      logger.info(
-        `Received final credit pack registration txid for purchase burn txid ${purchaseBurnTxid}: ${finalTxid}`
-      );
-      return finalTxid;
-    } catch (error) {
-      logger.error(
-        `Error retrieving final credit pack registration txid for purchase burn txid ${purchaseBurnTxid}: ${error.message}`
-      );
-      throw error;
+      throw new Error(`Failed to get closest supernodes: ${error.message}`);
     }
   }
 }
 
-module.exports = {
-  PastelInferenceClient,
-};
+export default PastelInferenceClient;

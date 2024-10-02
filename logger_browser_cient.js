@@ -1,53 +1,69 @@
-function safeStringify(obj, space = 2) {
-  const seen = new WeakSet();
+// browser_logger.js
 
-  const replacer = (key, value) => {
-    if (typeof value === "object" && value !== null) {
-      if (seen.has(value)) {
-        return "[Circular]";
-      }
-      seen.add(value);
+class BrowserLogger {
+  constructor() {
+    this.logBuffer = [];
+    this.MAX_LOG_ENTRIES = 100;
+    this.listeners = new Map();
+  }
 
-      if (isSequelizeModel(value)) {
-        return value.get({ plain: true });
-      }
-      if (value.isJoi) {
-        return `Joi Schema for ${value.type}`;
-      }
-      if (value instanceof Map) {
-        return Array.from(value.entries());
-      }
-      if (value instanceof Set) {
-        return Array.from(value);
-      }
-      if (value instanceof Date) {
-        return value.toISOString();
-      }
-      if (value instanceof Error) {
-        const errorDetails = {};
-        Object.getOwnPropertyNames(value).forEach((prop) => {
-          errorDetails[prop] = value[prop];
-        });
-        return errorDetails;
-      }
-      if (value.constructor === Object) {
-        const sortedObj = {};
-        Object.keys(value)
-          .sort()
-          .forEach((key) => {
-            sortedObj[key] = value[key];
-          });
-        return sortedObj;
-      }
-    } else if (typeof value === "bigint") {
-      return value.toString();
+  log(level, msg, meta) {
+    const logEntry = { level, msg, meta, timestamp: new Date().toISOString() };
+    this.logBuffer.push(this.safeStringify(logEntry));
+    if (this.logBuffer.length > this.MAX_LOG_ENTRIES) {
+      this.logBuffer.shift();
     }
-    return value;
-  };
+    this.emit('newLog', this.safeStringify(logEntry));
 
-  return JSON.stringify(obj, replacer, space);
-}
+    // Use console methods based on log level
+    switch (level) {
+      case 'error':
+        console.error(msg, meta);
+        break;
+      case 'warn':
+        console.warn(msg, meta);
+        break;
+      case 'info':
+        console.info(msg, meta);
+        break;
+      default:
+        console.log(msg, meta);
+    }
+  }
 
-const logger = console;
+  error(msg, meta) {
+    this.log('error', msg, meta);
+  }
 
-module.exports = { logger, safeStringify };
+  warn(msg, meta) {
+    this.log('warn', msg, meta);
+  }
+
+  info(msg, meta) {
+    this.log('info', msg, meta);
+  }
+
+  debug(msg, meta) {
+    this.log('debug', msg, meta);
+  }
+
+  on(eventName, listener) {
+    if (!this.listeners.has(eventName)) {
+      this.listeners.set(eventName, new Set());
+    }
+    this.listeners.get(eventName).add(listener);
+  }
+
+  off(eventName, listener) {
+    if (this.listeners.has(eventName)) {
+      this.listeners.get(eventName).delete(listener);
+    }
+  }
+
+  emit(eventName, data) {
+    if (this.listeners.has(eventName)) {
+      for (const listener of this.listeners.get(eventName)) {
+        listener(data);
+      }
+    }
+  }
